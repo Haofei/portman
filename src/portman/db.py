@@ -1,0 +1,149 @@
+"""SQLite mapping database.
+
+Design choice: SQLite is the *queryable* store; it is rebuildable at any time
+from (a) the upstream/target source trees and (b) the human-curated facts
+exported to JSONL (`mappings/curated.jsonl`). The curated JSONL is the
+git-tracked source of truth for the things humans decide — ownership, manual
+links, statuses, deviations. Inventory tables are derived and need not be
+committed. This keeps merge conflicts to the small curated file, not the
+thousands of auto-extracted symbols.
+
+Tables
+  symbols      every upstream and target item (derived)
+  mappings     upstream_sid -> target_sid + status/verification/owner (curated)
+  deviations   intentional differences (curated)
+  snapshots    progress totals per run, for historical trend lines (append-only)
+"""
+from __future__ import annotations
+
+import json
+import sqlite3
+import time
+from pathlib import Path
+
+from .model import Symbol, Mapping, Deviation
+
+SCHEMA = """
+CREATE TABLE IF NOT EXISTS symbols (
+  sid TEXT, side TEXT, repo TEXT, path TEXT, qualname TEXT, kind TEXT,
+  signature TEXT, lineno INT, end_lineno INT, version TEXT,
+  sig_hash TEXT, body_hash TEXT, is_public INT,
+  PRIMARY KEY (sid, version, side)
+);
+CREATE INDEX IF NOT EXISTS ix_sym_side ON symbols(side, version);
+CREATE INDEX IF NOT EXISTS ix_sym_path ON symbols(side, path);
+
+CREATE TABLE IF NOT EXISTS mappings (
+  upstream_sid TEXT PRIMARY KEY,
+  target_sid TEXT, status TEXT, verification TEXT, owner TEXT, reviewer TEXT,
+  deviation_id TEXT, note TEXT, declared_upstream_path TEXT,
+  declared_upstream_version TEXT, confidence TEXT, updated_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS deviations (
+  did TEXT PRIMARY KEY, upstream_sid TEXT, title TEXT, rationale TEXT,
+  kind TEXT, approved_by TEXT, upstream_version TEXT, created_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS snapshots (
+  ts TEXT, upstream_version TEXT, metric TEXT, value REAL
+);
+"""
+
+
+class DB:
+    def __init__(self, path: Path):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        self.c = sqlite3.connect(path)
+        self.c.row_factory = sqlite3.Row
+        self.c.executescript(SCHEMA)
+
+    # ---- inventory (derived) -------------------------------------------------
+    def replace_symbols(self, side: str, version: str, syms: list[Symbol]):
+        self.c.execute("DELETE FROM symbols WHERE side=? AND version=?", (side, version))
+        self.c.executemany(
+            "INSERT OR REPLACE INTO symbols VALUES "
+            "(:sid,:side,:repo,:path,:qualname,:kind,:signature,:lineno,"
+            ":end_lineno,:version,:sig_hash,:body_hash,:is_public)",
+            [{**s.to_row(), "is_public": int(s.is_public)} for s in syms])
+        self.c.commit()
+
+    def symbols(self, side: str, version: str, kind: str | None = None) -> list[sqlite3.Row]:
+        q = "SELECT * FROM symbols WHERE side=? AND version=?"
+        a: list = [side, version]
+        if kind:
+            q += " AND kind=?"; a.append(kind)
+        return self.c.execute(q, a).fetchall()
+
+    # ---- curated facts -------------------------------------------------------
+    def upsert_mapping(self, m: Mapping):
+        m.updated_at = m.updated_at or time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        self.c.execute(
+            "INSERT INTO mappings VALUES "
+            "(:upstream_sid,:target_sid,:status,:verification,:owner,:reviewer,"
+            ":deviation_id,:note,:declared_upstream_path,:declared_upstream_version,"
+            ":confidence,:updated_at) "
+            "ON CONFLICT(upstream_sid) DO UPDATE SET "
+            "target_sid=excluded.target_sid,status=excluded.status,"
+            "verification=excluded.verification,owner=excluded.owner,"
+            "reviewer=excluded.reviewer,deviation_id=excluded.deviation_id,"
+            "note=excluded.note,declared_upstream_path=excluded.declared_upstream_path,"
+            "declared_upstream_version=excluded.declared_upstream_version,"
+            "confidence=excluded.confidence,updated_at=excluded.updated_at",
+            m.to_row())
+        self.c.commit()
+
+    def mapping(self, upstream_sid: str) -> sqlite3.Row | None:
+        return self.c.execute("SELECT * FROM mappings WHERE upstream_sid=?",
+                              (upstream_sid,)).fetchone()
+
+    def mappings(self) -> list[sqlite3.Row]:
+        return self.c.execute("SELECT * FROM mappings").fetchall()
+
+    def upsert_deviation(self, d: Deviation):
+        self.c.execute(
+            "INSERT OR REPLACE INTO deviations VALUES "
+            "(:did,:upstream_sid,:title,:rationale,:kind,:approved_by,"
+            ":upstream_version,:created_at)", d.to_row())
+        self.c.commit()
+
+    def deviations(self) -> list[sqlite3.Row]:
+        return self.c.execute("SELECT * FROM deviations").fetchall()
+
+    # ---- history -------------------------------------------------------------
+    def add_snapshot(self, version: str, metrics: dict[str, float]):
+        ts = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        self.c.executemany("INSERT INTO snapshots VALUES (?,?,?,?)",
+                           [(ts, version, k, v) for k, v in metrics.items()])
+        self.c.commit()
+
+    def history(self, metric: str) -> list[sqlite3.Row]:
+        return self.c.execute(
+            "SELECT ts,upstream_version,value FROM snapshots WHERE metric=? ORDER BY ts",
+            (metric,)).fetchall()
+
+    # ---- curated JSONL round-trip (git source of truth) ---------------------
+    def export_curated(self, path: Path):
+        rows = [dict(r) for r in self.mappings()
+                if r["confidence"] in ("manual", "review")
+                or r["owner"] or r["deviation_id"] or r["note"]]
+        with path.open("w") as f:
+            f.write("# curated mappings — human-owned facts; auto links are not stored here\n")
+            for r in sorted(rows, key=lambda r: r["upstream_sid"]):
+                f.write(json.dumps({"type": "mapping", **r}, sort_keys=True) + "\n")
+            for r in self.deviations():
+                f.write(json.dumps({"type": "deviation", **dict(r)}, sort_keys=True) + "\n")
+
+    def import_curated(self, path: Path):
+        if not path.exists():
+            return
+        for line in path.read_text().splitlines():
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            obj = json.loads(line)
+            t = obj.pop("type")
+            if t == "mapping":
+                self.upsert_mapping(Mapping(**obj))
+            elif t == "deviation":
+                self.upsert_deviation(Deviation(**obj))

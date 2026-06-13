@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://portman/schema/mapping.schema.json",
+  "title": "Source-to-Target Mapping Record",
+  "description": "One curated mapping between an upstream symbol and its target implementation. The auto-mapper produces these with confidence=auto; humans promote them.",
+  "type": "object",
+  "required": ["upstream_sid", "status"],
+  "properties": {
+    "upstream_sid": {"type": "string", "description": "16-hex stable id of the upstream symbol (sha1 of repo::path::qualname::kind)."},
+    "target_sid": {"type": ["string", "null"], "description": "Stable id of the linked target symbol, or null if unported."},
+    "status": {"enum": ["not_started", "in_progress", "partial", "implemented", "verified", "diverged", "deprecated"]},
+    "verification": {"enum": ["none", "signature", "golden", "differential", "fuzz", "ported_tests"], "default": "none"},
+    "owner": {"type": "string"},
+    "reviewer": {"type": "string"},
+    "deviation_id": {"type": ["string", "null"], "description": "FK into deviations[] when status=diverged."},
+    "note": {"type": "string"},
+    "declared_upstream_path": {"type": "string", "description": "Upstream path the target file's provenance header claims (for audit of drift)."},
+    "declared_upstream_version": {"type": "string"},
+    "confidence": {"enum": ["auto", "manual", "review"], "default": "auto", "description": "auto links never override manual/review decisions."},
+    "updated_at": {"type": "string", "format": "date-time"}
+  }
+}

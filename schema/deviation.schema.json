@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://portman/schema/deviation.schema.json",
+  "title": "Intentional Deviation Record",
+  "description": "A documented, approved difference between the target and upstream. A mapping with status=diverged MUST reference one of these by deviation_id.",
+  "type": "object",
+  "required": ["did", "upstream_sid", "title", "rationale", "kind"],
+  "properties": {
+    "did": {"type": "string", "pattern": "^D-[0-9]{4}$", "description": "e.g. D-0007"},
+    "upstream_sid": {"type": "string"},
+    "title": {"type": "string"},
+    "rationale": {"type": "string", "description": "Why the target intentionally differs."},
+    "kind": {"enum": ["behavioral", "api", "omission", "addition", "perf", "platform"]},
+    "approved_by": {"type": "string"},
+    "upstream_version": {"type": "string", "description": "Upstream version at which the deviation was decided."},
+    "created_at": {"type": "string", "format": "date-time"}
+  }
+}

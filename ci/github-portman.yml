@@ -1,0 +1,73 @@
+# Drop into .github/workflows/portman.yml in the TARGET repo (tinygrad-rsmc).
+# Gates: provenance must not regress, port % must not drop, deviations must be
+# documented, and an upstream-upgrade report is posted when the baseline moves.
+name: portman
+
+on:
+  pull_request:
+  push: { branches: [master, main] }
+  schedule:
+    - cron: "0 6 * * 1"   # Monday: check upstream for a new release
+
+jobs:
+  port-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { path: target }
+      - name: Checkout upstream at pinned baseline
+        uses: actions/checkout@v4
+        with:
+          repository: tinygrad/tinygrad
+          ref: fa400f9790ab9a684387b02e958658217b33e7c1
+          path: upstream
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }   # tomllib needs >=3.11
+      - name: Install portman
+        run: git clone https://example/port-management portman   # or vendor it
+
+      - name: Build inventory + map
+        working-directory: portman
+        run: |
+          make inventory map
+
+      - name: Gate — provenance headers present
+        working-directory: portman
+        run: |
+          missing=$(python3 -m portman provenance lint | grep -c MISSING || true)
+          echo "files missing provenance: $missing"
+          test "$missing" -le "${PORTMAN_MAX_MISSING:-0}"
+
+      - name: Gate — port % did not regress
+        working-directory: portman
+        run: |
+          python3 -m portman status --json > now.json
+          python3 - <<'PY'
+          import json
+          now = json.load(open("now.json"))["weighted_pct"]
+          floor = float(open("port_floor.txt").read()) if __import__("os").path.exists("port_floor.txt") else 0
+          assert now + 0.1 >= floor, f"port regressed: {now}% < floor {floor}%"
+          print(f"OK weighted={now}% floor={floor}%")
+          PY
+
+      - name: Behavioral verification (golden + differential)
+        working-directory: portman
+        run: make verify || true   # see docs/08; wire to the target's oracle harness
+
+      - name: Render dashboard + upgrade report
+        working-directory: portman
+        run: |
+          make report
+          # If a newer upstream tag exists, diff against it for the PR summary.
+          LATEST=$(git -C ../upstream tag --sort=-creatordate | head -1)
+          BASE=fa400f9790ab9a684387b02e958658217b33e7c1
+          python3 -m portman snapshot --version "$LATEST" || true
+          python3 -m portman diff "$BASE" "$LATEST" || true
+
+      - name: Publish to PR / job summary
+        working-directory: portman
+        run: cat reports/dashboard.md >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        with: { name: port-reports, path: portman/reports/ }

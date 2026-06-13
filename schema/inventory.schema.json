@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://portman/schema/inventory.schema.json",
+  "title": "Symbol Inventory Record",
+  "description": "One extracted item from either side. Files are symbols too (qualname=\"\"), so a single table answers both file-level and symbol-level questions.",
+  "type": "object",
+  "required": ["sid", "side", "repo", "path", "kind", "version"],
+  "properties": {
+    "sid": {"type": "string"},
+    "side": {"enum": ["upstream", "target"]},
+    "repo": {"type": "string"},
+    "path": {"type": "string", "description": "Repo-relative path."},
+    "qualname": {"type": "string", "description": "Dotted name; empty for files."},
+    "kind": {"enum": ["file", "module", "class", "function", "method", "constant", "type", "test"]},
+    "signature": {"type": "string", "description": "Normalized signature; empty if n/a."},
+    "lineno": {"type": "integer"},
+    "end_lineno": {"type": "integer"},
+    "version": {"type": "string", "description": "Upstream commit/release this was extracted at; \"working\" for the live target tree."},
+    "sig_hash": {"type": "string", "description": "Hash of the normalized signature — cheap signature-drift detection."},
+    "body_hash": {"type": "string", "description": "Hash of the symbol's source text — behavioral-change signal."},
+    "is_public": {"type": "boolean"}
+  }
+}

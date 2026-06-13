@@ -1,0 +1,9 @@
+# Derived, rebuildable artifacts — never the source of truth.
+mappings/port.db
+reports/*.md
+reports/*.json
+__pycache__/
+*.pyc
+.pytest_cache/
+# Keep curated.jsonl (human source of truth) and reports/.gitkeep.
+!reports/.gitkeep

@@ -1,0 +1,31 @@
+# portman project configuration for the tinygrad -> tinygrad-rsmc port.
+project = "tinygrad-rsmc"
+
+# Where the queryable DB and generated reports live.
+db = "mappings/port.db"
+reports = "reports"
+
+[upstream]
+repo = "tinygrad"
+root = "/home/zoe/tinygrad/tinygrad"          # the Python package, not the whole repo
+adapter = "python"
+version = "fa400f9790ab9a684387b02e958658217b33e7c1"   # pinned baseline (v0.13.0-160)
+# runtime/autogen is machine-generated and vendored verbatim; it is not a
+# hand-port target, so it is excluded from the porting denominator.
+exclude = ["runtime/autogen", "__pycache__"]
+
+[target]
+repo = "tinygrad-rss"
+root = "/home/zoe/tinygrad-rsmc/tinygrad-rss/src"
+adapter = "rss"
+version = "working"                            # target tracks the working tree
+exclude = ["vendor", "__pycache__"]
+
+# Example of adding a brand-new target language with zero code, via the generic
+# regex adapter. Reference only — not used by the tinygrad port above.
+[adapters.go]
+patterns = ["*.go"]
+[adapters.go.rules]
+function = "^func\\s+(?:\\([^)]*\\)\\s*)?([A-Za-z_][A-Za-z0-9_]*)\\s*\\("
+type = "^type\\s+([A-Za-z_][A-Za-z0-9_]*)\\s"
+constant = "^const\\s+([A-Za-z_][A-Za-z0-9_]*)\\b"
