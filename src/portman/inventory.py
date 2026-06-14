@@ -303,12 +303,27 @@ def file_correspondence(cfg: Config, db: DB) -> dict:
         up_path = file_corr.get(t["path"])
         if up_path:
             tgt_by_uppath.setdefault(up_path, []).append(t)
+
+    # One upstream file may be split across SEVERAL target files (e.g. uop/ops.py ->
+    # ops.rss + alu.rss + vminmax.rss). Keep the full list; the "primary" (for the
+    # single-target file mapping) is the stem-mirroring target, else the first.
+    uppath_to_tgtpaths: dict[str, list[str]] = {}
+    for tgt_path, up_path in file_corr.items():
+        uppath_to_tgtpaths.setdefault(up_path, []).append(tgt_path)
+    for paths in uppath_to_tgtpaths.values():
+        paths.sort()
+
+    def _primary(up_path: str) -> str:
+        paths = uppath_to_tgtpaths[up_path]
+        return next((p for p in paths if _stem(p) == _stem(up_path)), paths[0])
+
     return {
         "up_syms": up_syms, "tg_syms": tg_syms, "declared": declared,
         "file_corr": file_corr, "tgt_by_uppath": tgt_by_uppath,
         "header_confirmed": header_confirmed,
-        "up_file_to_tgt_file": {v: tg_files[k]["sid"] for k, v in file_corr.items() if k in tg_files},
-        "uppath_to_tgtpath": {v: k for k, v in file_corr.items()},
+        "up_file_to_tgt_file": {up: tg_files[_primary(up)]["sid"] for up in uppath_to_tgtpaths},
+        "uppath_to_tgtpath": {up: _primary(up) for up in uppath_to_tgtpaths},
+        "uppath_to_tgtpaths": uppath_to_tgtpaths,
     }
 
 
@@ -324,7 +339,7 @@ def best_target_candidate(u, tgt_by_uppath, rules, target_owner: dict) -> dict |
         if sc > best_sc:
             best, best_sc = t, sc
     if best:
-        return {"qualname": best["qualname"], "kind": best["kind"],
+        return {"qualname": best["qualname"], "kind": best["kind"], "path": best["path"],
                 "taken_by": target_owner.get(best["sid"]), "kind_mismatch": False}
     # no kind-compatible match — is there a same-name target of an incompatible kind?
     us, uw = _symbol_forms(u, rules, "upstream")
@@ -334,7 +349,7 @@ def best_target_candidate(u, tgt_by_uppath, rules, target_owner: dict) -> dict |
             continue
         ts, tw = _symbol_forms(t, rules, "target")
         if wanted & (ts | tw):
-            return {"qualname": t["qualname"], "kind": t["kind"],
+            return {"qualname": t["qualname"], "kind": t["kind"], "path": t["path"],
                     "taken_by": None, "kind_mismatch": True}
     return None
 

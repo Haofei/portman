@@ -116,11 +116,14 @@ def cmd_gaps(args):
     # match-dependent reasons (kind_mismatch/already_mapped/link_candidate) need the
     # candidate lookup, so a --reason filter implies --explain.
     explain = args.explain or bool(args.reason)
-    gp = progress.gaps(db, cfg.upstream.version, limit=args.limit, cfg=cfg, explain=explain)
+    # filter BEFORE limiting, else --limit truncates the global list and the
+    # --public/--reason filters then return fewer (or miss) matching gaps.
+    gp = progress.gaps(db, cfg.upstream.version, cfg=cfg, explain=explain)
     if args.public:
         gp = [g for g in gp if g["public"]]
     if args.reason:
         gp = [g for g in gp if g.get("reason") == args.reason]
+    gp = gp[:args.limit]
     if args.json:
         print(json.dumps(gp, indent=2)); return
     for g in gp:
@@ -155,8 +158,10 @@ def cmd_batches(args):
     for b in bs:
         print(f"### {b['batch']}  [risk {b['risk']}, +{b['coverage_impact_pts']}pts, "
               f"{b['count']} symbols / {b['public_count']} public]")
-        if b["target_file"]:
-            print(f"    target file: {b['target_file']}")
+        tf = b.get("target_files") or ([b["target_file"]] if b.get("target_file") else [])
+        if tf:
+            label = "target file" if len(tf) == 1 else f"target files ({len(tf)})"
+            print(f"    {label}: {', '.join(tf[:4])}" + (" …" if len(tf) > 4 else ""))
         print(f"    reasons: " + ", ".join(f"{r}={n}" for r, n in sorted(b['reasons'].items(), key=lambda x: -x[1])))
         if b["blockers"]:
             print(f"    blockers: " + "; ".join(b["blockers"]))

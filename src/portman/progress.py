@@ -181,6 +181,7 @@ def gaps(db: DB, up_version: str, limit: int | None = None, cfg=None,
             if explain:
                 g["detail"] = detail
                 g["target_candidate"] = tm["qualname"] if tm else None
+                g["target_candidate_path"] = tm["path"] if tm else None
         out.append(g)
     out.sort(key=lambda g: (-g["risk"], g["path"], g["qualname"]))
     return out[:limit] if limit else out
@@ -201,7 +202,7 @@ def batches(db: DB, up_version: str, cfg, limit: int | None = None,
     verification command — i.e. it doubles as the machine-readable manifest (#9)."""
     from . import inventory
     fc = inventory.file_correspondence(cfg, db)
-    uppath_to_tgt = fc["uppath_to_tgtpath"]
+    uppath_to_tgtpaths = fc["uppath_to_tgtpaths"]   # split ports: all target files
     cov = coverage(db, up_version, cfg)
     sym_total = max(cov["total_symbols"], 1)
 
@@ -218,11 +219,19 @@ def batches(db: DB, up_version: str, cfg, limit: int | None = None,
     for (path, owner), members in groups.items():
         reasons = Counter(m.get("reason", "missing") for m in members)
         blockers = sorted({_BLOCKER[r] for r in reasons if r in _BLOCKER})
+        # Suggest where this batch actually lands: prefer the files the batch's own
+        # candidates live in; else fall back to the upstream file's mirror(s). For a
+        # split port this is a LIST, not one (misleading) file.
+        cand_paths = Counter(m["target_candidate_path"] for m in members
+                             if m.get("target_candidate_path"))
+        target_files = ([p for p, _ in cand_paths.most_common()]
+                        or uppath_to_tgtpaths.get(path, []))
         out.append({
             "batch": f"{owner} in {path}",
             "upstream_path": path,
             "owner": owner,
-            "target_file": uppath_to_tgt.get(path, ""),
+            "target_files": target_files,
+            "target_file": target_files[0] if target_files else "",
             "symbols": [f"{m['path']}::{m['qualname']}" for m in members],
             "count": len(members),
             "public_count": sum(1 for m in members if m["public"]),

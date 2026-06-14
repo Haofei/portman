@@ -103,9 +103,12 @@ def main() -> int:
         if not bs:
             f.append("no batches produced")
         else:
-            need = {"batch", "symbols", "blockers", "coverage_impact_pts", "verify", "target_file"}
+            need = {"batch", "symbols", "blockers", "coverage_impact_pts", "verify",
+                    "target_file", "target_files"}
             if not need <= set(bs[0]):
                 f.append(f"batch missing fields: {need - set(bs[0])}")
+            if not isinstance(bs[0]["target_files"], list):   # split ports -> list, not 1
+                f.append("target_files should be a list (supports split ports)")
             if "Base" not in {b["owner"] for b in bs}:
                 f.append(f"Base.other not grouped under owner Base: {[b['owner'] for b in bs]}")
         if any("weird_name" in s for b in bs for s in b["symbols"]):
