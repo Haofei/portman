@@ -50,9 +50,10 @@ test:
 pytest:
 	$(PY) -m pytest -q tests
 
-lint:        ## ruff + import-linter (no-ops with a note if not installed)
+lint:        ## ruff + import-linter if installed; ALWAYS run the layering guard
 	@command -v ruff >/dev/null && ruff check src tests || echo "ruff not installed — skipping (config in pyproject.toml)"
-	@command -v lint-imports >/dev/null && lint-imports || echo "import-linter not installed — tests/layering.py enforces the same contracts"
+	@command -v lint-imports >/dev/null && lint-imports || echo "import-linter not installed — using the dependency-free layering guard below"
+	$(PY) tests/layering.py
 
 clean:
 	rm -f mappings/port.db
