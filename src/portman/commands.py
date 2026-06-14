@@ -13,7 +13,7 @@ from .config import Config
 from .db import DB
 from . import inventory, progress, diff as diffmod, report as reportmod
 from . import provenance as prov
-from .model import Mapping, symbol_id, Status
+from .model import Mapping, symbol_id, Status, Confidence, Side
 
 
 def _cfg(args) -> Config:
@@ -207,9 +207,9 @@ def cmd_snapshot(args):
         try:
             from .adapters import get_adapter
             ad = get_adapter(cfg.upstream.adapter, cfg.generic_adapters.get(cfg.upstream.adapter))
-            syms = ad.extract_tree(Path(tmp) / rel, "upstream", cfg.upstream.repo,
+            syms = ad.extract_tree(Path(tmp) / rel, Side.UPSTREAM.value, cfg.upstream.repo,
                                    sha, cfg.upstream.exclude)
-            db.replace_symbols("upstream", sha, syms)
+            db.replace_symbols(Side.UPSTREAM.value, sha, syms)
             db.set_version_alias(ref, sha)   # so `diff <ref> ...` resolves
             print(f"snapshot {ref} ({sha[:10]}): {len(syms)} upstream symbols stored")
             print(f"  use either the ref '{ref}' or sha '{sha[:10]}' with `portman diff`")
@@ -222,11 +222,11 @@ def _resolve_diff_version(cfg, db, v: str) -> str:
     """Resolve a user-supplied version (tag/branch/sha) to the key its symbols are
     stored under: try the alias table, then `git rev-parse` in the upstream repo."""
     resolved = db.resolve_version(v)
-    if db.has_version("upstream", resolved):
+    if db.has_version(Side.UPSTREAM.value, resolved):
         return resolved
     sha = subprocess.run(["git", "-C", str(cfg.upstream.root), "rev-parse", v],
                          capture_output=True, text=True).stdout.strip()
-    if sha and db.has_version("upstream", sha):
+    if sha and db.has_version(Side.UPSTREAM.value, sha):
         return sha
     return resolved   # caller reports the missing snapshot
 
@@ -236,7 +236,7 @@ def cmd_diff(args):
     old = _resolve_diff_version(cfg, db, args.old)
     new = _resolve_diff_version(cfg, db, args.new)
     for label, raw, res in (("old", args.old, old), ("new", args.new, new)):
-        if not db.has_version("upstream", res):
+        if not db.has_version(Side.UPSTREAM.value, res):
             print(f"error: no snapshot for {label} version '{raw}'. "
                   f"Run: portman snapshot --version {raw}")
             return 1
@@ -264,7 +264,7 @@ def cmd_set(args):
                  owner=args.owner or (m["owner"] if m else ""),
                  deviation_id=args.deviation or (m["deviation_id"] if m else None),
                  note=args.note or (m["note"] if m else ""),
-                 confidence="manual")
+                 confidence=Confidence.MANUAL.value)
     db.upsert_mapping(mm)
     db.export_curated(cfg.root / "mappings" / "curated.jsonl")
     print(f"set {args.upstream} -> {args.status} (curated.jsonl updated)")
@@ -277,7 +277,7 @@ def _resolve_upstream_sid(db, cfg, spec: str, kind: str):
     if "::" in spec:
         path, _, qual = spec.partition("::")
         return symbol_id(cfg.upstream.repo, path, qual, kind), None
-    matches = [s for s in db.symbols("upstream", cfg.upstream.version)
+    matches = [s for s in db.symbols(Side.UPSTREAM.value, cfg.upstream.version)
                if s["qualname"] == spec and (not kind or s["kind"] == kind)]
     if len(matches) == 1:
         return matches[0]["sid"], None
@@ -305,7 +305,7 @@ def cmd_alias(args):
         return 1
     db.upsert_mapping(Mapping(
         upstream_sid=alias_sid, target_sid=pm["target_sid"],
-        status=Status.ALIASED.value, covers=primary_sid, confidence="manual",
+        status=Status.ALIASED.value, covers=primary_sid, confidence=Confidence.MANUAL.value,
         note=args.note or f"alias of {args.of}"))
     db.export_curated(cfg.root / "mappings" / "curated.jsonl")
     print(f"aliased {args.alias} -> covered by {args.of} (target preserved; "
@@ -320,16 +320,16 @@ def cmd_link(args):
     cfg, db = _ctx(args)
     up_p, _, up_q = args.upstream.partition("::")
     tg_p, _, tg_q = args.target.partition("::")
-    u = next((s for s in db.symbols("upstream", cfg.upstream.version)
+    u = next((s for s in db.symbols(Side.UPSTREAM.value, cfg.upstream.version)
               if s["path"] == up_p and s["qualname"] == up_q), None)
-    t = next((s for s in db.symbols("target", cfg.target.version)
+    t = next((s for s in db.symbols(Side.TARGET.value, cfg.target.version)
               if s["path"] == tg_p and s["qualname"] == tg_q), None)
     if not u:
         print(f"error: upstream '{args.upstream}' not found"); return 1
     if not t:
         print(f"error: target '{args.target}' not found"); return 1
     db.upsert_mapping(Mapping(upstream_sid=u["sid"], target_sid=t["sid"],
-                              status=Status.IMPLEMENTED.value, confidence="manual",
+                              status=Status.IMPLEMENTED.value, confidence=Confidence.MANUAL.value,
                               note=args.note or f"forced link to {args.target}"))
     db.export_curated(cfg.root / "mappings" / "curated.jsonl")
     print(f"linked {args.upstream} -> {args.target} (curated.jsonl updated)")
@@ -339,7 +339,7 @@ def cmd_trace(args):
     cfg, db = _ctx(args)
     path, _, qual = args.target.partition("::")
     found = False
-    for s in db.symbols("upstream", cfg.upstream.version):
+    for s in db.symbols(Side.UPSTREAM.value, cfg.upstream.version):
         if s["path"] == path and (not qual or s["qualname"] == qual):
             m = db.mapping(s["sid"])
             print(f"UPSTREAM {cfg.upstream.repo}@{(cfg.upstream.version or 'working')[:10]}")
@@ -454,7 +454,7 @@ def cmd_doctor(args):
     # DB-derived checks (only if the DB exists)
     if cfg.db_path.exists():
         db = DB(cfg.db_path)
-        pe = db.parse_errors("upstream", cfg.upstream.version) + db.parse_errors("target", cfg.target.version)
+        pe = db.parse_errors(Side.UPSTREAM.value, cfg.upstream.version) + db.parse_errors(Side.TARGET.value, cfg.target.version)
         add(not pe, f"no parse errors ({len(pe)})", "; ".join(r["path"] for r in pe[:3]), warn=bool(pe))
         dups = db.duplicate_targets()
         add(not dups, f"no duplicate target mappings ({len(dups)})",

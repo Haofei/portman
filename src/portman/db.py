@@ -22,7 +22,7 @@ import time
 from dataclasses import fields
 from pathlib import Path
 
-from .model import Symbol, Mapping, Deviation
+from .model import Symbol, Mapping, Deviation, Confidence
 
 #: mappings table columns — the single source of truth is the Mapping dataclass,
 #: so adding a field flows into INSERT/UPSERT automatically (the CREATE TABLE and
@@ -151,7 +151,7 @@ class DB:
     def clear_config_links(self):
         """Drop config-derived ([mapping.symbol_links]) mappings so they can be
         re-applied fresh — removing a link from config removes it from the DB."""
-        self.c.execute("DELETE FROM mappings WHERE confidence='config'")
+        self.c.execute("DELETE FROM mappings WHERE confidence=?", (Confidence.CONFIG.value,))
         self.c.commit()
 
     def mapping(self, upstream_sid: str) -> sqlite3.Row | None:
@@ -193,7 +193,8 @@ class DB:
         # Only HUMAN-owned facts belong in the git source of truth. Ambiguous/auto
         # rows carry an auto-generated note, so note alone must not qualify a row.
         rows = [dict(r) for r in self.mappings()
-                if r["confidence"] in ("manual", "review") or r["owner"] or r["deviation_id"]]
+                if r["confidence"] in (Confidence.MANUAL.value, Confidence.REVIEW.value)
+                or r["owner"] or r["deviation_id"]]
         with path.open("w") as f:
             f.write("# curated mappings — human-owned facts; auto links are not stored here\n")
             for r in sorted(rows, key=lambda r: r["upstream_sid"]):

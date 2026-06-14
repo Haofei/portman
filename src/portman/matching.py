@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from typing import Callable
 
 from .config import Config
+from .model import Side
 
 #: kinds that are not matchable symbols (files/modules/tests/parse markers)
 CODE_KINDS = ("file", "test", "module", "parse_error")
@@ -127,7 +128,7 @@ def _receiver_method_forms(sym, rules: MappingRules) -> set[str]:
 
 
 def _symbol_forms(sym, rules: MappingRules = NO_RULES,
-                  side: str = "target") -> tuple[set[str], set[str]]:
+                  side: str = Side.TARGET.value) -> tuple[set[str], set[str]]:
     strong, weak = _forms(sym["qualname"], rules)
     for alias in rules.type_aliases.get(sym["qualname"], set()):
         a_s, a_w = _forms(alias, rules)
@@ -139,7 +140,7 @@ def _symbol_forms(sym, rules: MappingRules = NO_RULES,
                 strong.add(f"{_snake(owner)}_{_snake(leaf)}")
     # Receiver inference is a TARGET-side convention (flattened method whose first
     # param is the receiver). Applying it upstream would mint phantom owner forms.
-    if side == "target" and sym["kind"] == "function" and "." not in sym["qualname"]:
+    if side == Side.TARGET.value and sym["kind"] == "function" and "." not in sym["qualname"]:
         owner = _first_arg_owner(sym, rules)
         if owner:
             leaf = sym["qualname"].rsplit(".", 1)[-1]
@@ -179,8 +180,8 @@ def match_score(u, t, rules: MappingRules = NO_RULES) -> int:
         if (rules.inplace_suffix and leaf.endswith("_") and not leaf.endswith("__")
                 and t["qualname"] == f"{_snake(owner)}_{_snake(leaf[:-1])}{rules.inplace_suffix}"):
             return 4
-    us, uw = _symbol_forms(u, rules, "upstream")
-    ts, tw = _symbol_forms(t, rules, "target")
+    us, uw = _symbol_forms(u, rules, Side.UPSTREAM.value)
+    ts, tw = _symbol_forms(t, rules, Side.TARGET.value)
     if us & ts:
         return 3
     if (us & tw) or (uw & ts) or (uw & tw):
@@ -203,12 +204,12 @@ def best_target_candidate(u, tgt_by_uppath, rules, target_owner: dict) -> dict |
         return {"qualname": best["qualname"], "kind": best["kind"], "path": best["path"],
                 "taken_by": target_owner.get(best["sid"]), "kind_mismatch": False}
     # no kind-compatible match — is there a same-name target of an incompatible kind?
-    us, uw = _symbol_forms(u, rules, "upstream")
+    us, uw = _symbol_forms(u, rules, Side.UPSTREAM.value)
     wanted = us | uw
     for t in tgt_by_uppath.get(u["path"], []):
         if t["kind"] in CODE_KINDS:
             continue
-        ts, tw = _symbol_forms(t, rules, "target")
+        ts, tw = _symbol_forms(t, rules, Side.TARGET.value)
         if wanted & (ts | tw):
             return {"qualname": t["qualname"], "kind": t["kind"], "path": t["path"],
                     "taken_by": None, "kind_mismatch": True}

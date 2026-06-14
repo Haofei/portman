@@ -18,7 +18,7 @@ from pathlib import Path
 from .config import Config
 from .db import DB
 from .adapters import get_adapter
-from .model import Mapping, Status
+from .model import Mapping, Status, Confidence, LOCKED_CONFIDENCE, Side
 from . import provenance as prov
 from .matching import MappingRules, CODE_KINDS, match_score, _no_args
 
@@ -47,14 +47,14 @@ def _upstream_exts(cfg: Config) -> tuple[str, ...]:
 def build_inventory(cfg: Config, db: DB, allow_parse_errors: bool = True) -> dict:
     up_ad = _adapter(cfg, cfg.upstream.adapter)
     tg_ad = target_adapter(cfg)
-    up = up_ad.extract_tree(cfg.upstream.root, "upstream", cfg.upstream.repo,
+    up = up_ad.extract_tree(cfg.upstream.root, Side.UPSTREAM.value, cfg.upstream.repo,
                             cfg.upstream.version, cfg.upstream.exclude, allow_parse_errors)
-    tg = tg_ad.extract_tree(cfg.target.root, "target", cfg.target.repo,
+    tg = tg_ad.extract_tree(cfg.target.root, Side.TARGET.value, cfg.target.repo,
                             cfg.target.version, cfg.target.exclude, allow_parse_errors)
-    db.replace_symbols("upstream", cfg.upstream.version, up)
-    db.replace_symbols("target", cfg.target.version, tg)
-    db.replace_parse_errors("upstream", cfg.upstream.version, up_ad.parse_errors)
-    db.replace_parse_errors("target", cfg.target.version, tg_ad.parse_errors)
+    db.replace_symbols(Side.UPSTREAM.value, cfg.upstream.version, up)
+    db.replace_symbols(Side.TARGET.value, cfg.target.version, tg)
+    db.replace_parse_errors(Side.UPSTREAM.value, cfg.upstream.version, up_ad.parse_errors)
+    db.replace_parse_errors(Side.TARGET.value, cfg.target.version, tg_ad.parse_errors)
     return {"upstream_symbols": len(up), "target_symbols": len(tg),
             "parse_errors": len(up_ad.parse_errors) + len(tg_ad.parse_errors),
             "target_source": "inventory" if getattr(tg_ad, "name", "") == "inventory" else "scraper"}
@@ -93,8 +93,8 @@ def file_correspondence(cfg: Config, db: DB) -> dict:
     """Establish which target file implements which upstream file (provenance
     header first, path-stem mirroring as fallback) and index target symbols by the
     upstream path of their file. Shared by auto_map and `gaps --explain`."""
-    up_syms = db.symbols("upstream", cfg.upstream.version)
-    tg_syms = db.symbols("target", cfg.target.version)
+    up_syms = db.symbols(Side.UPSTREAM.value, cfg.upstream.version)
+    tg_syms = db.symbols(Side.TARGET.value, cfg.target.version)
     up_paths = {s["path"] for s in up_syms}
     up_files = {s["path"]: s for s in up_syms if s["kind"] in ("file", "test", "module")}
     tg_files = {s["path"]: s for s in tg_syms if s["kind"] in ("file", "test", "module")}
@@ -175,7 +175,7 @@ def apply_symbol_links(cfg: Config, db: DB, up_syms, tg_syms) -> dict:
             missing.append(f"target {tg_spec}"); continue
         db.upsert_mapping(Mapping(
             upstream_sid=u["sid"], target_sid=t["sid"], status=Status.IMPLEMENTED.value,
-            confidence="config", note=f"forced symbol link: {tg_spec}",
+            confidence=Confidence.CONFIG.value, note=f"forced symbol link: {tg_spec}",
             updated_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())))
         linked += 1
     return {"linked": linked, "missing": missing}
@@ -195,14 +195,14 @@ def auto_map(cfg: Config, db: DB) -> dict:
     # they neither compete for targets nor get clobbered, so an explicit alias
     # (e.g. _data -> tensor_data) doesn't re-contend with its primary (data).
     locked = {m["upstream_sid"] for m in db.mappings()
-              if m["confidence"] in ("manual", "review", "config")
+              if m["confidence"] in LOCKED_CONFIDENCE
               or m["status"] == Status.ALIASED.value}
     # Targets already claimed by a forced/human link must not be auto-assigned to
     # another upstream (that would create a 1:1 duplicate, e.g. a `symbol_links`
     # Device -> device.rss::Device colliding with auto-mapped _Device). Aliases are
     # excluded: they intentionally SHARE a target with their primary.
     taken_targets = {m["target_sid"] for m in db.mappings()
-                     if m["target_sid"] and m["confidence"] in ("manual", "review", "config")
+                     if m["target_sid"] and m["confidence"] in LOCKED_CONFIDENCE
                      and m["status"] != Status.ALIASED.value}
 
     # --- 2. score every candidate edge, then assign with TARGET UNIQUENESS -----
@@ -234,7 +234,7 @@ def auto_map(cfg: Config, db: DB) -> dict:
             continue  # never clobber a human decision (manual/review/aliased)
         existing = db.mapping(u["sid"])
 
-        target_sid, status, confidence, note = None, Status.NOT_STARTED.value, "auto", ""
+        target_sid, status, confidence, note = None, Status.NOT_STARTED.value, Confidence.AUTO.value, ""
         if u["kind"] in ("file", "test", "module"):
             target_sid = up_file_to_tgt_file.get(u["path"])
             if target_sid:
@@ -248,7 +248,7 @@ def auto_map(cfg: Config, db: DB) -> dict:
             if won:
                 target_sid, status = won, Status.IMPLEMENTED.value
             elif cands:                  # had candidates but none uniquely ours
-                confidence, note = "ambiguous", "name-collision; needs manual disambiguation"
+                confidence, note = Confidence.AMBIGUOUS.value, "name-collision; needs manual disambiguation"
 
         dec_tgt = uppath_to_tgtpath.get(u["path"], "")
         m = Mapping(upstream_sid=u["sid"], target_sid=target_sid, status=status,
@@ -260,7 +260,7 @@ def auto_map(cfg: Config, db: DB) -> dict:
         db.upsert_mapping(m)
         if target_sid:
             linked += 1
-        elif confidence == "ambiguous":
+        elif confidence == Confidence.AMBIGUOUS.value:
             ambiguous += 1
     return {"linked": linked, "ambiguous": ambiguous,
             "file_pairs": len(file_corr), "header_confirmed": header_confirmed,

@@ -20,6 +20,8 @@ from __future__ import annotations
 
 import fnmatch
 
+from .model import Confidence
+
 
 def area_of(path: str, areas: dict[str, list[str]]) -> str:
     """First configured area whose any prefix matches the path; else 'other'."""
@@ -76,7 +78,7 @@ def gap_reason(sym, status: str, mapping, target_match: dict | None,
         return r, "declared in [gap_reasons]"
 
     # derived from mapping/match state
-    if mapping and mapping["confidence"] == "ambiguous":
+    if mapping and mapping["confidence"] == Confidence.AMBIGUOUS.value:
         return "alias_needed", mapping["note"] or "name-collision; needs alias/link"
     if target_match:
         if target_match.get("taken_by"):

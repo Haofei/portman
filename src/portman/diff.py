@@ -11,6 +11,7 @@ removed that we still carry (candidate deprecations)."""
 from __future__ import annotations
 
 from .db import DB
+from .model import Side
 
 
 def _key(s) -> tuple:
@@ -19,8 +20,8 @@ def _key(s) -> tuple:
 
 
 def upstream_diff(db: DB, old_v: str, new_v: str) -> dict:
-    old = {_key(s): s for s in db.symbols("upstream", old_v)}
-    new = {_key(s): s for s in db.symbols("upstream", new_v)}
+    old = {_key(s): s for s in db.symbols(Side.UPSTREAM.value, old_v)}
+    new = {_key(s): s for s in db.symbols(Side.UPSTREAM.value, new_v)}
     old_keys, new_keys = set(old), set(new)
 
     added = [k for k in new_keys - old_keys]
@@ -64,7 +65,7 @@ def upstream_diff(db: DB, old_v: str, new_v: str) -> dict:
 def upgrade_report(db: DB, old_v: str, new_v: str) -> dict:
     """Cross the upstream diff with our current port state."""
     d = upstream_diff(db, old_v, new_v)
-    old = {_key(s): s for s in db.symbols("upstream", old_v)}
+    old = {_key(s): s for s in db.symbols(Side.UPSTREAM.value, old_v)}
 
     # ported symbols whose upstream signature/body changed => need re-verification
     needs_reverify = []

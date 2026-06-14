@@ -10,7 +10,7 @@ from __future__ import annotations
 from collections import defaultdict, Counter
 
 from .db import DB
-from .model import Status, WEIGHT
+from .model import Status, WEIGHT, Confidence, Side
 from . import inventory, matching
 from . import classify
 
@@ -47,7 +47,7 @@ def coverage(db: DB, up_version: str, cfg=None) -> dict:
     areas = cfg.areas if cfg else {}
     copied_roots = cfg.copied_roots if cfg else ()
     ignore = cfg.ignore if cfg else {}
-    syms = db.symbols("upstream", up_version)
+    syms = db.symbols(Side.UPSTREAM.value, up_version)
     m_by_sid = db.mapping_index()
     by_status: dict[str, int] = defaultdict(int)
     by_kind: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
@@ -159,7 +159,7 @@ def gaps(db: DB, up_version: str, limit: int | None = None, cfg=None,
                                                  if us else m["upstream_sid"])
 
     out = []
-    for s in db.symbols("upstream", up_version):
+    for s in db.symbols(Side.UPSTREAM.value, up_version):
         if s["kind"] == "parse_error":
             continue
         st = m_by_sid[s["sid"]]["status"] if s["sid"] in m_by_sid else Status.NOT_STARTED.value
@@ -245,7 +245,7 @@ def unverified(db: DB, up_version: str) -> list[dict]:
     """Implemented but not yet behaviorally verified — the verification backlog."""
     idx = db.mapping_index()
     out = []
-    for s in db.symbols("upstream", up_version):
+    for s in db.symbols(Side.UPSTREAM.value, up_version):
         m = idx.get(s["sid"])
         if m and m["status"] == Status.IMPLEMENTED.value:
             out.append({"path": s["path"], "qualname": s["qualname"] or "<file>",
@@ -256,7 +256,7 @@ def unverified(db: DB, up_version: str) -> list[dict]:
 def diverged(db: DB, up_version: str) -> list[dict]:
     idx = db.mapping_index()
     out = []
-    for s in db.symbols("upstream", up_version):
+    for s in db.symbols(Side.UPSTREAM.value, up_version):
         m = idx.get(s["sid"])
         if m and m["status"] == Status.DIVERGED.value:
             out.append({"path": s["path"], "qualname": s["qualname"] or "<file>",
@@ -268,7 +268,7 @@ def aliases(db: DB, up_version: str) -> list[dict]:
     """Upstream symbols intentionally covered by another symbol's target
     (alias / private forwarder / public wrapper)."""
     idx = db.mapping_index()
-    syms = db.symbols("upstream", up_version)
+    syms = db.symbols(Side.UPSTREAM.value, up_version)
     sym_by_sid = {s["sid"]: s for s in syms}
     out = []
     for s in syms:
@@ -288,9 +288,9 @@ def ambiguous(db: DB, up_version: str) -> list[dict]:
     a human must disambiguate or record a deviation."""
     idx = db.mapping_index()
     out = []
-    for s in db.symbols("upstream", up_version):
+    for s in db.symbols(Side.UPSTREAM.value, up_version):
         m = idx.get(s["sid"])
-        if m and m["confidence"] == "ambiguous":
+        if m and m["confidence"] == Confidence.AMBIGUOUS.value:
             out.append({"path": s["path"], "qualname": s["qualname"] or "<file>",
                         "note": m["note"]})
     return out

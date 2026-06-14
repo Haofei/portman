@@ -28,6 +28,12 @@ class SymbolKind(str, enum.Enum):
     TEST = "test"
 
 
+class Side(str, enum.Enum):
+    """Which tree a symbol/inventory belongs to."""
+    UPSTREAM = "upstream"
+    TARGET = "target"
+
+
 class Status(str, enum.Enum):
     """Implementation status of a mapped item. Ordered worst -> best so progress
     can be scored numerically (see WEIGHT)."""
@@ -63,6 +69,20 @@ class Verification(str, enum.Enum):
     DIFFERENTIAL = "differential"  # ran both, compared outputs
     FUZZ = "fuzz"                  # property/fuzz tested against upstream
     PORTED_TESTS = "ported_tests"  # upstream test suite ported and green
+
+
+class Confidence(str, enum.Enum):
+    """How a mapping link was established — independent of Status/Verification."""
+    AUTO = "auto"            # machine-proposed by the matcher
+    MANUAL = "manual"        # a human set/forced it (curated, persisted to JSONL)
+    REVIEW = "review"        # a second human signed off
+    CONFIG = "config"        # derived from [mapping.symbol_links] (re-applied each map)
+    AMBIGUOUS = "ambiguous"  # only a name-collision match; not a real link
+
+
+# confidence levels that are human/forced decisions (locked against the auto-mapper
+# and, except CONFIG, exported to curated.jsonl)
+LOCKED_CONFIDENCE = (Confidence.MANUAL.value, Confidence.REVIEW.value, Confidence.CONFIG.value)
 
 
 def symbol_id(repo: str, path: str, qualname: str, kind: str) -> str:
@@ -117,7 +137,7 @@ class Mapping:
     # provenance the target file declared about itself, for audit
     declared_upstream_path: str = ""
     declared_upstream_version: str = ""
-    confidence: str = "auto"       # "auto" | "manual" | "review" | "ambiguous"
+    confidence: str = Confidence.AUTO.value
     updated_at: str = ""
 
     def to_row(self) -> dict:
