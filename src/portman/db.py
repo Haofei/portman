@@ -149,6 +149,12 @@ class DB:
             m.to_row())
         self.c.commit()
 
+    def clear_config_links(self):
+        """Drop config-derived ([mapping.symbol_links]) mappings so they can be
+        re-applied fresh — removing a link from config removes it from the DB."""
+        self.c.execute("DELETE FROM mappings WHERE confidence='config'")
+        self.c.commit()
+
     def mapping(self, upstream_sid: str) -> sqlite3.Row | None:
         return self.c.execute("SELECT * FROM mappings WHERE upstream_sid=?",
                               (upstream_sid,)).fetchone()

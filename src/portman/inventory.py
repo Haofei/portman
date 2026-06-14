@@ -326,10 +326,38 @@ def best_target_candidate(u, tgt_by_uppath, rules, target_owner: dict) -> dict |
     return None
 
 
+def apply_symbol_links(cfg: Config, db: DB, up_syms, tg_syms) -> dict:
+    """Honor [mapping.symbol_links] — explicit upstream `path::Qual` -> target
+    `path::Qual` links for names the matcher can't bridge (namespace flattening,
+    typevars, renames). Stored with confidence='config' so they are locked against
+    the auto-mapper but NOT written to curated.jsonl (they are re-derived from
+    config each run). Returns {linked, missing:[...]}."""
+    links = (cfg.mapping or {}).get("symbol_links", {})
+    db.clear_config_links()
+    up_idx = {(s["path"], s["qualname"]): s for s in up_syms}
+    tg_idx = {(s["path"], s["qualname"]): s for s in tg_syms}
+    linked, missing = 0, []
+    for up_spec, tg_spec in links.items():
+        up_p, _, up_q = up_spec.partition("::")
+        tg_p, _, tg_q = tg_spec.partition("::")
+        u, t = up_idx.get((up_p, up_q)), tg_idx.get((tg_p, tg_q))
+        if not u:
+            missing.append(f"upstream {up_spec}"); continue
+        if not t:
+            missing.append(f"target {tg_spec}"); continue
+        db.upsert_mapping(Mapping(
+            upstream_sid=u["sid"], target_sid=t["sid"], status=Status.IMPLEMENTED.value,
+            confidence="config", note=f"forced symbol link: {tg_spec}",
+            updated_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())))
+        linked += 1
+    return {"linked": linked, "missing": missing}
+
+
 def auto_map(cfg: Config, db: DB) -> dict:
     rules = MappingRules.from_config(cfg)
     fc = file_correspondence(cfg, db)
     up_syms, tg_syms = fc["up_syms"], fc["tg_syms"]
+    forced = apply_symbol_links(cfg, db, up_syms, tg_syms)
     declared = fc["declared"]
     file_corr, tgt_by_uppath = fc["file_corr"], fc["tgt_by_uppath"]
     up_file_to_tgt_file, uppath_to_tgtpath = fc["up_file_to_tgt_file"], fc["uppath_to_tgtpath"]
@@ -339,7 +367,8 @@ def auto_map(cfg: Config, db: DB) -> dict:
     # they neither compete for targets nor get clobbered, so an explicit alias
     # (e.g. _data -> tensor_data) doesn't re-contend with its primary (data).
     locked = {m["upstream_sid"] for m in db.mappings()
-              if m["confidence"] in ("manual", "review") or m["status"] == Status.ALIASED.value}
+              if m["confidence"] in ("manual", "review", "config")
+              or m["status"] == Status.ALIASED.value}
 
     # --- 2. score every candidate edge, then assign with TARGET UNIQUENESS -----
     # links[u_sid] = (target_sid, score); a target is awarded to its single best
@@ -399,4 +428,5 @@ def auto_map(cfg: Config, db: DB) -> dict:
         elif confidence == "ambiguous":
             ambiguous += 1
     return {"linked": linked, "ambiguous": ambiguous,
-            "file_pairs": len(file_corr), "header_confirmed": header_confirmed}
+            "file_pairs": len(file_corr), "header_confirmed": header_confirmed,
+            "forced_links": forced["linked"], "forced_missing": forced["missing"]}

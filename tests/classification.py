@@ -36,12 +36,15 @@ roots = ["gen/"]
 "util.py::skip_me" = "intentionally out of scope"
 [deps]
 boost = ["core/base.py::Base.key"]
+[mapping.symbol_links]
+"util.py::weird_name" = "util.rss::lowered_weird"
 """
 
 UP_BASE = "class Base:\n    def key(self): ...\n    def other(self): ...\n"
-UP_UTIL = "def helper(): ...\ndef skip_me(): ...\n"
+UP_UTIL = "def helper(): ...\ndef skip_me(): ...\ndef weird_name(): ...\n"
 UP_GEN = "def generated_thing(): ...\n"
 TG_BASE = "// @port upstream: up/core/base.py\nstruct Base {}\nfn base_key(b: read Base) {}\n"
+TG_UTIL = "// @port upstream: up/util.py\nfn lowered_weird() {}\n"
 
 
 def main() -> int:
@@ -55,11 +58,14 @@ def main() -> int:
         (root / "up/util.py").write_text(UP_UTIL)
         (root / "up/gen/g.py").write_text(UP_GEN)
         (root / "tg/src/core/base.rss").write_text(TG_BASE)
+        (root / "tg/src/util.rss").write_text(TG_UTIL)
         (root / "portman.toml").write_text(CFG)
         cfg = Config.load(root / "portman.toml")
         db = DB(cfg.db_path)
         inventory.build_inventory(cfg, db)
-        inventory.auto_map(cfg, db)
+        res = inventory.auto_map(cfg, db)
+        if res.get("forced_links") != 1:
+            f.append(f"forced link not applied: {res.get('forced_links')} {res.get('forced_missing')}")
 
         # pure classify checks
         if classify.area_of("core/base.py", cfg.areas) != "core": f.append("area core")
@@ -78,6 +84,13 @@ def main() -> int:
         quals = {g["qualname"] for g in gp}
         if "skip_me" in quals: f.append("ignored symbol leaked into gaps")
         if "generated_thing" in quals: f.append("copied symbol leaked into gaps")
+        if "weird_name" in quals: f.append("forced-linked symbol still a gap")
+        # the forced link must point weird_name -> lowered_weird, confidence=config
+        from portman.model import symbol_id
+        wsid = symbol_id("up", "util.py", "weird_name", "function")
+        wm = db.mapping(wsid)
+        if not (wm and wm["confidence"] == "config" and wm["status"] == "implemented"):
+            f.append(f"forced link mapping wrong: {dict(wm) if wm else None}")
         # dep boost: Base.key ranked above Base.other
         ranks = {g["qualname"]: g["risk"] for g in gp}
         # Base.key is implemented (base_key) so may not be a gap; check 'other' exists as gap

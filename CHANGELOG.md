@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased — forced symbol links (todo chunk C, #1)
+
+- **`[mapping.symbol_links]`** — explicit upstream `path::Qual` -> target
+  `path::Qual` links for names the matcher can't bridge (namespace flattening,
+  typevars, renames). Re-derived from config each `map` (confidence=`config`,
+  locked against the auto-mapper, never written to curated.jsonl). Missing
+  endpoints are reported by `map`.
+- **`portman link UP TARGET`** — one-off durable forced link (confidence=manual,
+  persisted to curated.jsonl), the counterpart to `portman alias`.
+- Renamed to avoid collision: "alias" stays the covered-by relation; forced
+  name-bridging is "link". `gaps --explain` suggests `link_candidate` where a
+  close target name exists.
+
 ## Unreleased — port-workflow features (todo chunks A+B)
 
 From `docs/tinygrad-port-todo.md`. A new shared `classify` module unifies several

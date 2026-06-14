@@ -75,6 +75,15 @@ UPat = ["upat"]
 owner = "UOp"
 strip_prefix = "uop_"
 
+# Forced symbol links (#1) for names the matcher can't bridge (namespace
+# flattening, typevars, renames). upstream "path::Qual" -> target "path::Qual".
+# These are re-derived from config each `map` (confidence=config, not committed
+# to curated.jsonl). For one-off decisions use `portman link UP TARGET`.
+[mapping.symbol_links]
+# "helpers.py::count" = "helpers.rss::helpers_count"
+# "helpers.py::T" = "helpers.rss::helpers_T"
+# "tensor.py::T" = "tensor.rss::tensor_T_typevar"
+
 # Example of adding a brand-new target language with zero code, via the generic
 # regex adapter. Reference only — not used by the tinygrad port above.
 [adapters.go]

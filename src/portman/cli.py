@@ -10,6 +10,7 @@
   portman diff OLD NEW              upstream change report between two snapshots
   portman set STATUS --upstream ... manually set a mapping's status/owner (curated)
   portman alias A --of B            mark upstream A as covered by B's target (alias)
+  portman link UP TARGET            force a link for names the matcher can't bridge
   portman trace PATH[::QUALNAME]    show the full provenance/verification record
   portman export                    write curated facts to mappings/curated.jsonl
   portman import                    load curated facts from mappings/curated.jsonl
@@ -58,6 +59,10 @@ def cmd_map(args):
     print(f"file pairs: {r['file_pairs']}  (header-confirmed: {r['header_confirmed']})")
     print(f"auto-linked symbols: {r['linked']}  "
           f"(ambiguous/unlinked name-collisions: {r['ambiguous']})")
+    if r.get("forced_links"):
+        print(f"forced symbol links (config): {r['forced_links']}")
+    for miss in r.get("forced_missing", []):
+        print(f"  ⚠️ symbol_link target not found: {miss}")
 
 
 _REGRESSION_METRICS = ("symbol_pct", "public_api_pct", "verified_pct", "weighted_pct")
@@ -286,6 +291,29 @@ def cmd_alias(args):
           f"curated.jsonl updated)")
 
 
+def cmd_link(args):
+    """Force a link from an upstream symbol to a specific target symbol, for names
+    the matcher can't bridge. This writes a durable manual link to curated.jsonl
+    (for one-offs); for bulk conventions use [mapping.symbol_links] in config.
+    Example: portman link 'helpers.py::count' 'helpers.rss::helpers_count'."""
+    cfg = _cfg(args); db = _db(cfg)
+    up_p, _, up_q = args.upstream.partition("::")
+    tg_p, _, tg_q = args.target.partition("::")
+    u = next((s for s in db.symbols("upstream", cfg.upstream.version)
+              if s["path"] == up_p and s["qualname"] == up_q), None)
+    t = next((s for s in db.symbols("target", cfg.target.version)
+              if s["path"] == tg_p and s["qualname"] == tg_q), None)
+    if not u:
+        print(f"error: upstream '{args.upstream}' not found"); return 1
+    if not t:
+        print(f"error: target '{args.target}' not found"); return 1
+    db.upsert_mapping(Mapping(upstream_sid=u["sid"], target_sid=t["sid"],
+                              status=Status.IMPLEMENTED.value, confidence="manual",
+                              note=args.note or f"forced link to {args.target}"))
+    db.export_curated(cfg.root / "mappings" / "curated.jsonl")
+    print(f"linked {args.upstream} -> {args.target} (curated.jsonl updated)")
+
+
 def cmd_trace(args):
     cfg = _cfg(args); db = _db(cfg)
     path, _, qual = args.target.partition("::")
@@ -490,6 +518,8 @@ def build_parser():
     s.add_argument("--of", required=True, help="primary upstream symbol path::Qualname")
     s.add_argument("--kind", default="method"); s.add_argument("--of-kind", dest="of_kind", default="")
     s.add_argument("--note", default=""); s.set_defaults(func=cmd_alias)
+    s = sub.add_parser("link"); s.add_argument("upstream"); s.add_argument("target")
+    s.add_argument("--note", default=""); s.set_defaults(func=cmd_link)
     s = sub.add_parser("trace"); s.add_argument("target"); s.set_defaults(func=cmd_trace)
     sub.add_parser("export").set_defaults(func=cmd_export)
     sub.add_parser("import").set_defaults(func=cmd_import)
