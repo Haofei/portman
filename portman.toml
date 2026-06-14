@@ -57,6 +57,10 @@ roots = []
 [deps]
 boost = ["uop/ops.py::UOp.const", "uop/ops.py::UOp.alu", "dtype.py::dtypes"]
 
+# Suggested verification command included in batch manifests (#9).
+[verify]
+command = "RSSCRIPT_RUNTIME_PATH=/home/zoe/rsscript/crates/runtime /home/zoe/rsscript/target/release/rss run tinygrad-rss && python3 oracle/roundtrip.py"
+
 # Project-specific cross-language naming conventions for auto-mapping. All optional
 # and empty by default — the engine itself is library-agnostic; these encode how
 # tinygrad-rss specifically renames things.

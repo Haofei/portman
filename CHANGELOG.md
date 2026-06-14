@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased — batch planning (todo chunk D, #3/#8/#9)
+
+- **`portman batches`** groups related gaps into coherent port batches by
+  (upstream file, owner class) — e.g. "ElementwiseMixin methods",
+  "OpMixin methods", "UOp methods" — each with its suggested target file, a
+  reason histogram, derived blockers, risk, and expected coverage-impact points.
+- **Manifest export (#9):** `batches --out FILE` (or `--json`) writes a
+  machine-readable worklist: per batch the symbols, target file, blockers,
+  coverage impact, and a verification command (`[verify].command`). Agents can
+  pick up a batch without re-deriving it.
+- **Dependency hints (#8):** `[deps].boost` ranks unlocking symbols first, so
+  e.g. the `UOp` batch surfaces near the top.
+
 ## Unreleased — forced symbol links (todo chunk C, #1)
 
 - **`[mapping.symbol_links]`** — explicit upstream `path::Qual` -> target

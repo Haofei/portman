@@ -7,11 +7,20 @@ Answers the headline questions:
 """
 from __future__ import annotations
 
-from collections import defaultdict
+from collections import defaultdict, Counter
 
 from .db import DB
 from .model import Status, WEIGHT
 from . import classify
+
+_BLOCKER = {
+    "alias_needed": "disambiguate name collisions (alias/link)",
+    "kind_mismatch": "kind mismatches — add forced symbol links",
+    "link_candidate": "add forced symbol links (close target names exist)",
+    "type_only": "type/constant — may need links or a type port",
+    "already_mapped": "target taken by another upstream — review uniqueness",
+    "missing": "no target yet — port from scratch",
+}
 
 # Kinds that constitute a library's actual API surface — what "public API
 # coverage" should measure. Files/modules/tests/parse_errors are tracked but are
@@ -182,6 +191,49 @@ def inventory_best(s, tgt_by_uppath, rules, target_owner):
     top-level import cycle)."""
     from . import inventory
     return inventory.best_target_candidate(s, tgt_by_uppath, rules, target_owner)
+
+
+def batches(db: DB, up_version: str, cfg, limit: int | None = None,
+            public_only: bool = False) -> list[dict]:
+    """Group related gaps into coherent port batches (#3). Symbols are grouped by
+    (upstream file, owner class) so you get 'UOp methods', 'UPat methods', etc.
+    Each batch carries its suggested target file, blockers, coverage impact, and a
+    verification command — i.e. it doubles as the machine-readable manifest (#9)."""
+    from . import inventory
+    fc = inventory.file_correspondence(cfg, db)
+    uppath_to_tgt = fc["uppath_to_tgtpath"]
+    cov = coverage(db, up_version, cfg)
+    sym_total = max(cov["total_symbols"], 1)
+
+    gp = gaps(db, up_version, cfg=cfg, explain=True)
+    groups: dict[tuple, list] = defaultdict(list)
+    for g in gp:
+        if public_only and not g["public"]:
+            continue
+        qual = g["qualname"]
+        owner = qual.rsplit(".", 1)[0] if "." in qual else "<module>"
+        groups[(g["path"], owner)].append(g)
+
+    out = []
+    for (path, owner), members in groups.items():
+        reasons = Counter(m.get("reason", "missing") for m in members)
+        blockers = sorted({_BLOCKER[r] for r in reasons if r in _BLOCKER})
+        out.append({
+            "batch": f"{owner} in {path}",
+            "upstream_path": path,
+            "owner": owner,
+            "target_file": uppath_to_tgt.get(path, ""),
+            "symbols": [f"{m['path']}::{m['qualname']}" for m in members],
+            "count": len(members),
+            "public_count": sum(1 for m in members if m["public"]),
+            "reasons": dict(reasons),
+            "blockers": blockers,
+            "risk": sum(m["risk"] for m in members),
+            "coverage_impact_pts": round(100 * len(members) / sym_total, 2),
+            "verify": cfg.verify_command or "<configure [verify].command>",
+        })
+    out.sort(key=lambda b: (-b["risk"], -b["count"]))
+    return out[:limit] if limit else out
 
 
 def unverified(db: DB, up_version: str) -> list[dict]:

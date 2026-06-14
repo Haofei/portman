@@ -40,6 +40,8 @@ class Config:
     dep_boost: tuple[str, ...] = ()
     # declared gap-reason overrides (#2): "path::Qual"/"path::*" -> reason
     gap_reasons: dict = field(default_factory=dict)
+    # suggested verification command included in batch manifests (#9)
+    verify_command: str = ""
     root: Path = Path(".")
 
     @classmethod
@@ -72,4 +74,5 @@ class Config:
             ignore=dict(data.get("ignore", {})),
             dep_boost=tuple(data.get("deps", {}).get("boost", [])),
             gap_reasons=dict(data.get("gap_reasons", {})),
+            verify_command=data.get("verify", {}).get("command", ""),
             root=root)

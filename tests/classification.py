@@ -98,6 +98,19 @@ def main() -> int:
         if "other" in reasons and reasons["other"] not in ("missing", "link_candidate", "alias_needed"):
             f.append(f"unexpected reason for other: {reasons['other']}")
 
+        # batches (#3) + manifest (#9): grouped, with the right fields
+        bs = progress.batches(db, "v1", cfg)
+        if not bs:
+            f.append("no batches produced")
+        else:
+            need = {"batch", "symbols", "blockers", "coverage_impact_pts", "verify", "target_file"}
+            if not need <= set(bs[0]):
+                f.append(f"batch missing fields: {need - set(bs[0])}")
+            if "Base" not in {b["owner"] for b in bs}:
+                f.append(f"Base.other not grouped under owner Base: {[b['owner'] for b in bs]}")
+        if any("weird_name" in s for b in bs for s in b["symbols"]):
+            f.append("forced-linked symbol leaked into a batch")
+
     if f:
         print("CLASSIFY FAIL:")
         for x in f: print("  -", x)

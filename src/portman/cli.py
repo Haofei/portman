@@ -3,7 +3,8 @@
   portman inventory                 extract upstream + target into the DB
   portman map                       auto-link via provenance + name matching
   portman status [--json]           print the coverage summary
-  portman gaps [--limit N] [--public]   ranked port gaps
+  portman gaps [--public] [--explain] [--reason R]   ranked port gaps + reasons
+  portman batches [--public] [--out F]  group gaps into port batches / manifest
   portman report                    write reports/dashboard.md + coverage.json
   portman provenance lint           list target files missing/with-legacy headers
   portman snapshot --version REF    re-extract upstream at a git ref into the DB
@@ -137,6 +138,31 @@ def cmd_gaps(args):
         print(f"-- {len(gp)} gaps  " + " ".join(f"{r}={n}" for r, n in sorted(hist.items(), key=lambda x: -x[1])))
     else:
         print(f"-- {len(gp)} gaps")
+
+
+def cmd_batches(args):
+    cfg = _cfg(args); db = _db(cfg)
+    bs = progress.batches(db, cfg.upstream.version, cfg, limit=args.limit,
+                          public_only=args.public)
+    if args.out or args.json:
+        manifest = {"upstream_version": cfg.upstream.version, "batches": bs}
+        text = json.dumps(manifest, indent=2, sort_keys=True)
+        if args.out:
+            Path(args.out).write_text(text); print(f"wrote manifest -> {args.out} ({len(bs)} batches)")
+        else:
+            print(text)
+        return
+    for b in bs:
+        print(f"### {b['batch']}  [risk {b['risk']}, +{b['coverage_impact_pts']}pts, "
+              f"{b['count']} symbols / {b['public_count']} public]")
+        if b["target_file"]:
+            print(f"    target file: {b['target_file']}")
+        print(f"    reasons: " + ", ".join(f"{r}={n}" for r, n in sorted(b['reasons'].items(), key=lambda x: -x[1])))
+        if b["blockers"]:
+            print(f"    blockers: " + "; ".join(b["blockers"]))
+        print(f"    e.g. {', '.join(s.split('::')[-1] for s in b['symbols'][:8])}"
+              + (f" … +{b['count']-8}" if b["count"] > 8 else ""))
+    print(f"-- {len(bs)} batches")
 
 
 def cmd_report(args):
@@ -500,6 +526,11 @@ def build_parser():
     s.add_argument("--explain", action="store_true", help="why each gap isn't linked")
     s.add_argument("--reason", default="", help="filter to one gap reason")
     s.add_argument("--json", action="store_true"); s.set_defaults(func=cmd_gaps)
+    s = sub.add_parser("batches"); s.add_argument("--limit", type=int, default=15)
+    s.add_argument("--public", action="store_true")
+    s.add_argument("--json", action="store_true")
+    s.add_argument("--out", metavar="FILE", help="write a machine-readable batch manifest")
+    s.set_defaults(func=cmd_batches)
     sub.add_parser("report").set_defaults(func=cmd_report)
     s = sub.add_parser("provenance"); s.add_argument("action", choices=["lint"], nargs="?", default="lint")
     s.add_argument("--limit", type=int, default=30); s.set_defaults(func=cmd_provenance)
