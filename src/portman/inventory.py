@@ -28,9 +28,19 @@ def _adapter(cfg: Config, name: str):
     return get_adapter(name, cfg.generic_adapters.get(name))
 
 
+def target_adapter(cfg: Config):
+    """Prefer a compiler-produced JSON inventory (#4) for the target when present;
+    otherwise fall back to the configured source scraper."""
+    inv = cfg.target.inventory
+    if inv and Path(inv).exists():
+        from .adapters.inventory_json import JsonInventoryAdapter
+        return JsonInventoryAdapter(inv)
+    return _adapter(cfg, cfg.target.adapter)
+
+
 def build_inventory(cfg: Config, db: DB, allow_parse_errors: bool = True) -> dict:
     up_ad = _adapter(cfg, cfg.upstream.adapter)
-    tg_ad = _adapter(cfg, cfg.target.adapter)
+    tg_ad = target_adapter(cfg)
     up = up_ad.extract_tree(cfg.upstream.root, "upstream", cfg.upstream.repo,
                             cfg.upstream.version, cfg.upstream.exclude, allow_parse_errors)
     tg = tg_ad.extract_tree(cfg.target.root, "target", cfg.target.repo,
@@ -40,7 +50,8 @@ def build_inventory(cfg: Config, db: DB, allow_parse_errors: bool = True) -> dic
     db.replace_parse_errors("upstream", cfg.upstream.version, up_ad.parse_errors)
     db.replace_parse_errors("target", cfg.target.version, tg_ad.parse_errors)
     return {"upstream_symbols": len(up), "target_symbols": len(tg),
-            "parse_errors": len(up_ad.parse_errors) + len(tg_ad.parse_errors)}
+            "parse_errors": len(up_ad.parse_errors) + len(tg_ad.parse_errors),
+            "target_source": "inventory" if getattr(tg_ad, "name", "") == "inventory" else "scraper"}
 
 
 def _snake(s: str) -> str:
@@ -263,12 +274,15 @@ def file_correspondence(cfg: Config, db: DB) -> dict:
     up_files = {s["path"]: s for s in up_syms if s["kind"] in ("file", "test", "module")}
     tg_files = {s["path"]: s for s in tg_syms if s["kind"] in ("file", "test", "module")}
 
-    tgt_ad = _adapter(cfg, cfg.target.adapter)
+    # provenance headers come from source files; a JSON inventory carries none, so
+    # correspondence then relies on path-stem mirroring.
+    tgt_ad = target_adapter(cfg)
     declared: dict[str, prov.Provenance] = {}
-    for f in tgt_ad.discover(cfg.target.root):
-        p = prov.parse_file(f, cfg.target.root)
-        if p.declared:
-            declared[p.target_path] = p
+    if getattr(tgt_ad, "name", "") != "inventory":
+        for f in tgt_ad.discover(cfg.target.root):
+            p = prov.parse_file(f, cfg.target.root)
+            if p.declared:
+                declared[p.target_path] = p
 
     up_by_stem = {_stem(p): p for p in up_files}
     file_corr: dict[str, str] = {}     # target path -> upstream path

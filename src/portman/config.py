@@ -14,6 +14,9 @@ class SideCfg:
     adapter: str
     version: str = ""   # git ref / release tag of the pinned baseline
     exclude: tuple[str, ...] = ()
+    # optional compiler-produced JSON inventory (#4); preferred over scraping
+    # source text when the file exists, else the adapter scraper is the fallback.
+    inventory: Path | None = None
 
 
 @dataclass
@@ -50,13 +53,16 @@ class Config:
         root = path.parent.resolve()
 
         def side(d: dict) -> SideCfg:
+            inv = d.get("inventory")
             return SideCfg(
                 repo=d["repo"],
                 root=(root / d["root"]).resolve() if not Path(d["root"]).is_absolute()
                      else Path(d["root"]),
                 adapter=d["adapter"],
                 version=d.get("version", ""),
-                exclude=tuple(d.get("exclude", [])))
+                exclude=tuple(d.get("exclude", [])),
+                inventory=((root / inv).resolve() if inv and not Path(inv).is_absolute()
+                           else (Path(inv) if inv else None)))
 
         risk = data.get("risk", {})
         return cls(

@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased — compiler-inventory ingestion (todo chunk E, #4)
+
+- **`[target] inventory = "inv.json"`** ingests a compiler-produced symbol
+  inventory (`module`, `qualname`, `kind`, `visibility`, `source_span`,
+  `lowered_name`) instead of scraping `.rss` text. Because qualnames are
+  source-level, matching against upstream is exact and the name-bridging
+  heuristics stop being load-bearing; `lowered_name` is kept for traceability.
+  The regex scraper remains the automatic fallback when the file is absent
+  (`inventory build` reports which source was used). This is the cross-repo half:
+  rsscript needs to emit the JSON; portman's ingestion side is done + tested.
+
 ## Unreleased — batch planning (todo chunk D, #3/#8/#9)
 
 - **`portman batches`** groups related gaps into coherent port batches by

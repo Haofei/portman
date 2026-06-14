@@ -68,3 +68,28 @@ applied to the **target side only**, so upstream Python annotations cannot mint
 phantom owner forms. Conventions handled generically: trailing-underscore in-place
 methods (`to_` → `tensor_to_inplace`), leading-underscore privates (kept distinct
 from the public name), and dunders (`__hash__` matched verbatim, beating `hash`).
+
+### Forced symbol links ([mapping.symbol_links])
+
+When the matcher can't bridge a name (namespace flattening, typevars, renames),
+declare it: `[mapping.symbol_links]` maps upstream `path::Qual` → target
+`path::Qual`. These are re-derived from config each `map` (confidence `config`,
+locked, not committed to curated.jsonl). For one-off decisions use
+`portman link UP TARGET` (confidence `manual`, persisted). `gaps --explain`
+flags `link_candidate`/`kind_mismatch` where a forced link is the likely fix.
+
+### Compiler-produced inventory ([target] inventory)
+
+Set `[target] inventory = "path/to/inv.json"` to ingest a compiler-emitted symbol
+inventory instead of scraping target source text (the scraper stays the fallback
+when the file is absent). Each record:
+
+```json
+{"module": "helpers", "qualname": "count", "kind": "function",
+ "visibility": "public", "source_span": [12, 40], "lowered_name": "helpers_count"}
+```
+
+Because `qualname` is the **source-level** name, matching against upstream is
+exact and the name-bridging heuristics stop being load-bearing; `lowered_name` is
+kept for traceability. `module` stems should mirror upstream file stems so file
+correspondence still works (no provenance headers in JSON).

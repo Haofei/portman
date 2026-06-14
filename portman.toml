@@ -20,6 +20,10 @@ root = "../tinygrad-rsmc/tinygrad-rss/src"
 adapter = "rss"
 version = "working"                           # target tracks the working tree
 exclude = ["vendor", "__pycache__"]
+# Prefer a compiler-produced JSON inventory over scraping .rss text, when present
+# (#4). Source-level qualnames match upstream exactly. Falls back to the scraper
+# if the file is absent. See docs/02 for the schema.
+# inventory = "../tinygrad-rsmc/tinygrad-rss/build/inventory.json"
 
 # Foundational-path bonuses for gap risk ranking. Library-specific and optional;
 # kept in config (not hard-coded) so the framework stays library-agnostic.
