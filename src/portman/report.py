@@ -14,9 +14,9 @@ def _bar(pct: float, width: int = 24) -> str:
     return "█" * fill + "░" * (width - fill)
 
 
-def dashboard_md(db: DB, up_version: str, risk_high=(), risk_medium=()) -> str:
-    cov = progress.coverage(db, up_version)
-    gp = progress.gaps(db, up_version, limit=25, risk_high=risk_high, risk_medium=risk_medium)
+def dashboard_md(db: DB, up_version: str, cfg=None) -> str:
+    cov = progress.coverage(db, up_version, cfg)
+    gp = progress.gaps(db, up_version, limit=25, cfg=cfg)
     unv = progress.unverified(db, up_version)
     dv = progress.diverged(db, up_version)
     al = progress.aliases(db, up_version)
@@ -31,9 +31,20 @@ def dashboard_md(db: DB, up_version: str, risk_high=(), risk_medium=()) -> str:
     L.append(f"- **Weighted progress** (planning only): {cov['weighted_pct']}%")
     if cov["parse_errors"]:
         L.append(f"- ⚠️ **Parse errors**: {cov['parse_errors']} file(s) failed to parse (excluded from all %)")
+    if cov.get("copied_total"):
+        L.append(f"- **Copied/generated** (separate): {cov['copied_pct']}% of {cov['copied_total']}")
+    if cov.get("ignored"):
+        L.append(f"- **Ignored** (out of scope, excluded): {cov['ignored']}")
     if amb:
         L.append(f"- ⚠️ **Ambiguous (name-collision) links**: {len(amb)} — not counted as ported")
     L.append("")
+
+    if cov.get("by_area") and set(cov["by_area"]) - {"other"}:
+        L.append("## Coverage by source area\n")
+        L.append("| Area | done | total | % |\n|---|---:|---:|---:|")
+        for a, d in sorted(cov["by_area"].items(), key=lambda x: x[1]["pct"]):
+            L.append(f"| {a} | {d['done']} | {d['total']} | {d['pct']}% |")
+        L.append("")
 
     L.append("## Status breakdown\n")
     L.append("| Status | Count |\n|---|---:|")
@@ -112,14 +123,13 @@ def upgrade_md(report: dict) -> str:
     return "\n".join(L)
 
 
-def write_all(db: DB, up_version: str, out: Path,
-              risk_high=(), risk_medium=()) -> dict:
+def write_all(db: DB, up_version: str, out: Path, cfg=None) -> dict:
     out.mkdir(parents=True, exist_ok=True)
-    cov = progress.coverage(db, up_version)
-    (out / "dashboard.md").write_text(dashboard_md(db, up_version, risk_high, risk_medium))
+    cov = progress.coverage(db, up_version, cfg)
+    (out / "dashboard.md").write_text(dashboard_md(db, up_version, cfg))
     (out / "coverage.json").write_text(json.dumps({
         "coverage": cov,
-        "gaps": progress.gaps(db, up_version, risk_high=risk_high, risk_medium=risk_medium),
+        "gaps": progress.gaps(db, up_version, cfg=cfg),
         "unverified": progress.unverified(db, up_version),
         "diverged": progress.diverged(db, up_version),
         "aliases": progress.aliases(db, up_version),

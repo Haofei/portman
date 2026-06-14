@@ -27,6 +27,36 @@ exclude = ["vendor", "__pycache__"]
 high = ["dtype", "uop/ops", "tensor", "device", "helpers"]
 medium = ["nn", "engine", "runtime", "codegen", "renderer"]
 
+# Coverage-by-source-area (#5): area name -> path prefixes (first match wins).
+[areas]
+tensor = ["tensor.py"]
+dtype = ["dtype.py"]
+helpers = ["helpers.py"]
+uop = ["uop/"]
+codegen = ["codegen/"]
+renderer = ["renderer/"]
+runtime = ["runtime/"]
+nn = ["nn/"]
+engine = ["engine/"]
+
+# Copied/generated roots (#6): tracked separately, never suggested as hand-port
+# batches. (Excluded from inventory entirely by [upstream].exclude above; move a
+# root here instead of excluding it if you want copied-coverage tracking.)
+[copied]
+roots = []
+
+# Reasoned suppressions (#7): out-of-scope files/symbols, shown separately.
+[ignore]
+# "examples/beautiful_mnist.py" = "example not runnable / missing upstream pieces"
+
+# Declared gap-reason overrides (#2): things portman can't derive.
+[gap_reasons]
+# "runtime/support/am/ip.py::*" = "blocked_by_rss"
+
+# Dependency hints (#8): upstream symbols that unlock downstream work, ranked first.
+[deps]
+boost = ["uop/ops.py::UOp.const", "uop/ops.py::UOp.alu", "dtype.py::dtypes"]
+
 # Project-specific cross-language naming conventions for auto-mapping. All optional
 # and empty by default — the engine itself is library-agnostic; these encode how
 # tinygrad-rss specifically renames things.

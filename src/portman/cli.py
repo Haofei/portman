@@ -60,9 +60,27 @@ def cmd_map(args):
           f"(ambiguous/unlinked name-collisions: {r['ambiguous']})")
 
 
+_REGRESSION_METRICS = ("symbol_pct", "public_api_pct", "verified_pct", "weighted_pct")
+
+
 def cmd_status(args):
     cfg = _cfg(args); db = _db(cfg)
-    cov = progress.coverage(db, cfg.upstream.version)
+    cov = progress.coverage(db, cfg.upstream.version, cfg)
+
+    if args.fail_on_regression:
+        prev = json.loads(Path(args.fail_on_regression).read_text())
+        prev = prev.get("coverage", prev)   # accept a raw status or a coverage.json
+        drops = [(k, prev.get(k, 0), cov[k]) for k in _REGRESSION_METRICS
+                 if cov[k] + 0.1 < prev.get(k, 0)]
+        if drops:
+            for k, was, now in drops:
+                print(f"REGRESSION {k}: {was}% -> {now}%")
+            return 1
+        print("no regression vs baseline (" + ", ".join(f"{k}={cov[k]}%" for k in _REGRESSION_METRICS) + ")")
+        return 0
+    if args.save:
+        Path(args.save).write_text(json.dumps(cov, indent=2, sort_keys=True))
+        print(f"saved status -> {args.save}")
     if args.json:
         print(json.dumps(cov, indent=2)); return
     print(f"upstream {cov['upstream_version'] or 'working'}: {cov['total_symbols']} symbols")
@@ -73,6 +91,15 @@ def cmd_status(args):
     print(f"  weighted (plan) : {cov['weighted_pct']}%")
     if cov["parse_errors"]:
         print(f"  parse errors    : {cov['parse_errors']} (excluded)")
+    if cov.get("copied_total"):
+        print(f"  copied/generated: {cov['copied_pct']}% of {cov['copied_total']} (separate)")
+    if cov.get("ignored"):
+        print(f"  ignored         : {cov['ignored']} (out of scope)")
+    areas = {a: d for a, d in cov.get("by_area", {}).items() if a != "other"}
+    if areas:
+        print("  by area:")
+        for a, d in sorted(areas.items(), key=lambda x: x[1]["pct"]):
+            print(f"    {a:18} {d['pct']:5}%  ({d['done']}/{d['total']})")
     print("  by status:")
     for k, v in sorted(cov["by_status"].items(), key=lambda x: -x[1]):
         print(f"    {k:14} {v}")
@@ -80,19 +107,36 @@ def cmd_status(args):
 
 def cmd_gaps(args):
     cfg = _cfg(args); db = _db(cfg)
-    gp = progress.gaps(db, cfg.upstream.version, limit=args.limit,
-                       risk_high=cfg.risk_high, risk_medium=cfg.risk_medium)
+    # match-dependent reasons (kind_mismatch/already_mapped/link_candidate) need the
+    # candidate lookup, so a --reason filter implies --explain.
+    explain = args.explain or bool(args.reason)
+    gp = progress.gaps(db, cfg.upstream.version, limit=args.limit, cfg=cfg, explain=explain)
     if args.public:
         gp = [g for g in gp if g["public"]]
+    if args.reason:
+        gp = [g for g in gp if g.get("reason") == args.reason]
+    if args.json:
+        print(json.dumps(gp, indent=2)); return
     for g in gp:
-        print(f"[{g['risk']}] {g['path']}::{g['qualname']} ({g['kind']}) {g['status']}")
-    print(f"-- {len(gp)} gaps")
+        line = f"[{g['risk']}] {g['path']}::{g['qualname']} ({g['kind']}) {g['status']}"
+        if g.get("reason"):
+            line += f"  — {g['reason']}"
+        print(line)
+        if explain and g.get("detail"):
+            print(f"        {g['detail']}")
+    # reason histogram so you can see the shape of the backlog
+    if cfg is not None and not args.json:
+        hist = {}
+        for g in gp:
+            hist[g.get("reason", "?")] = hist.get(g.get("reason", "?"), 0) + 1
+        print(f"-- {len(gp)} gaps  " + " ".join(f"{r}={n}" for r, n in sorted(hist.items(), key=lambda x: -x[1])))
+    else:
+        print(f"-- {len(gp)} gaps")
 
 
 def cmd_report(args):
     cfg = _cfg(args); db = _db(cfg)
-    cov = reportmod.write_all(db, cfg.upstream.version, cfg.reports_dir,
-                              risk_high=cfg.risk_high, risk_medium=cfg.risk_medium)
+    cov = reportmod.write_all(db, cfg.upstream.version, cfg.reports_dir, cfg)
     print(f"wrote {cfg.reports_dir}/dashboard.md  "
           f"(symbol {cov['symbol_pct']}%, public-API {cov['public_api_pct']}%)")
 
@@ -418,9 +462,16 @@ def build_parser():
     s = sub.add_parser("inventory"); s.add_argument("--strict", action="store_true",
         help="fail if any file fails to parse"); s.set_defaults(func=cmd_inventory)
     sub.add_parser("map").set_defaults(func=cmd_map)
-    s = sub.add_parser("status"); s.add_argument("--json", action="store_true"); s.set_defaults(func=cmd_status)
+    s = sub.add_parser("status"); s.add_argument("--json", action="store_true")
+    s.add_argument("--save", metavar="FILE", help="write current status JSON to FILE")
+    s.add_argument("--fail-on-regression", dest="fail_on_regression", metavar="FILE",
+                   help="exit nonzero if coverage dropped vs a saved status FILE")
+    s.set_defaults(func=cmd_status)
     s = sub.add_parser("gaps"); s.add_argument("--limit", type=int, default=40)
-    s.add_argument("--public", action="store_true"); s.set_defaults(func=cmd_gaps)
+    s.add_argument("--public", action="store_true")
+    s.add_argument("--explain", action="store_true", help="why each gap isn't linked")
+    s.add_argument("--reason", default="", help="filter to one gap reason")
+    s.add_argument("--json", action="store_true"); s.set_defaults(func=cmd_gaps)
     sub.add_parser("report").set_defaults(func=cmd_report)
     s = sub.add_parser("provenance"); s.add_argument("action", choices=["lint"], nargs="?", default="lint")
     s.add_argument("--limit", type=int, default=30); s.set_defaults(func=cmd_provenance)

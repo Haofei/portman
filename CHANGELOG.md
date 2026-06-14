@@ -1,6 +1,30 @@
 # Changelog
 
-## Unreleased — alias / covered-by mappings
+## Unreleased — port-workflow features (todo chunks A+B)
+
+From `docs/tinygrad-port-todo.md`. A new shared `classify` module unifies several
+asks so coverage, gaps, report, and `--explain` agree:
+
+- **Coverage by source area (#5).** `[areas]` config (name -> path prefixes);
+  `status`, `report`, and `coverage.json` show per-area done/total/% (e.g. on
+  tinygrad: renderer 35.6%, runtime 37.5% … tensor 90.6%).
+- **Unified gap reasons (#2).** Every gap is tagged `missing` / `alias_needed` /
+  `type_only` / `kind_mismatch` / `already_mapped` / `link_candidate`, plus
+  structural `ignored` / `copied_generated` and declared overrides via
+  `[gap_reasons]`. `gaps` prints a reason histogram; `--reason R` filters.
+- **`gaps --explain` (#11).** Surfaces *why* a symbol isn't linked, including the
+  closest in-file target candidate ("target X exists but kind differs",
+  "already mapped to Y", "close name — add a forced link").
+- **Reasoned ignores (#7) + copied roots (#6).** `[ignore]` (with reasons) and
+  `[copied]` segment out-of-scope/generated symbols from the real denominators;
+  reported separately, never shown as missing work.
+- **Regression guard (#10).** `status --save FILE` and
+  `status --fail-on-regression FILE` (exits nonzero if symbol/public-API/verified/
+  weighted coverage drops) — a first-class version of the CI floor check.
+- **Dependency hints (#8, partial).** `[deps].boost` ranks unlocking symbols first
+  (e.g. `UOp.const`/`UOp.alu` now top the gap list).
+
+## Earlier — alias / covered-by mappings
 
 - **New `aliased` status + `portman alias A --of B`.** Lets an upstream symbol be
   intentionally covered by another symbol's target (a private forwarder like

@@ -11,6 +11,7 @@ from collections import defaultdict
 
 from .db import DB
 from .model import Status, WEIGHT
+from . import classify
 
 # Kinds that constitute a library's actual API surface — what "public API
 # coverage" should measure. Files/modules/tests/parse_errors are tracked but are
@@ -28,29 +29,43 @@ def _is_test(s) -> bool:
     return s["kind"] == "test" or s["path"].startswith("test") or "/test" in s["path"]
 
 
-def coverage(db: DB, up_version: str) -> dict:
+def coverage(db: DB, up_version: str, cfg=None) -> dict:
     """Report SEPARATE coverage dimensions rather than one blended number, so
-    'implemented' never masquerades as 'API-complete' or 'verified'."""
+    'implemented' never masquerades as 'API-complete' or 'verified'. When `cfg`
+    is given, ignored/copied symbols are segmented out of the denominators and a
+    per-source-area breakdown is added."""
+    areas = cfg.areas if cfg else {}
+    copied_roots = cfg.copied_roots if cfg else ()
+    ignore = cfg.ignore if cfg else {}
     syms = db.symbols("upstream", up_version)
+    m_by_sid = {m["upstream_sid"]: m for m in db.mappings()}
     by_status: dict[str, int] = defaultdict(int)
     by_kind: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
+    by_area: dict[str, list] = defaultdict(lambda: [0, 0])   # area -> [done, total]
     weighted = 0.0
-    # dimension counters: (done, total)
     dim = {k: [0, 0] for k in ("file", "symbol", "public_api", "test", "verified")}
-    parse_errors = 0
+    parse_errors = ignored = 0
+    copied = [0, 0]
     scored = 0
     for s in syms:
         if s["kind"] == "parse_error":
             parse_errors += 1
             continue                       # not healthy inventory; excluded from %
-        st = _status_of(db, s["sid"])
+        path, qual = s["path"], s["qualname"] or ""
+        if classify.ignore_reason(path, qual, ignore) is not None:
+            ignored += 1                   # out of scope; excluded from every %
+            continue
+        m = m_by_sid.get(s["sid"])
+        st = m["status"] if m else Status.NOT_STARTED.value
         done = Status(st) in DONE
+        if classify.is_copied(path, copied_roots):
+            copied[1] += 1; copied[0] += done   # tracked separately, not in main %
+            continue
         verified = Status(st) in (Status.VERIFIED, Status.DIVERGED, Status.DEPRECATED)
         by_status[st] += 1
         by_kind[s["kind"]][st] += 1
         weighted += WEIGHT[Status(st)]
         scored += 1
-        # every real symbol counts toward "symbol" coverage
         dim["symbol"][1] += 1; dim["symbol"][0] += done
         dim["verified"][1] += 1; dim["verified"][0] += verified
         if s["kind"] in ("file", "module"):
@@ -59,6 +74,8 @@ def coverage(db: DB, up_version: str) -> dict:
             dim["test"][1] += 1; dim["test"][0] += done
         elif s["kind"] in API_KINDS and s["is_public"]:
             dim["public_api"][1] += 1; dim["public_api"][0] += done
+        a = classify.area_of(path, areas)
+        by_area[a][1] += 1; by_area[a][0] += done
 
     def pct(d, t):
         return round(100 * d / t, 1) if t else 0.0
@@ -67,9 +84,14 @@ def coverage(db: DB, up_version: str) -> dict:
         "upstream_version": up_version,
         "total_symbols": scored,
         "parse_errors": parse_errors,
+        "ignored": ignored,
+        "copied_done": copied[0], "copied_total": copied[1],
+        "copied_pct": pct(*copied),
         "weighted_pct": round(100 * weighted / scored, 1) if scored else 0.0,
         "by_status": dict(by_status),
         "by_kind": {k: dict(v) for k, v in by_kind.items()},
+        "by_area": {a: {"done": d, "total": t, "pct": pct(d, t)}
+                    for a, (d, t) in sorted(by_area.items())},
         # explicit, non-collapsed dimensions
         "file_pct": pct(*dim["file"]),
         "symbol_pct": pct(*dim["symbol"]),
@@ -81,9 +103,10 @@ def coverage(db: DB, up_version: str) -> dict:
     }
 
 
-def _risk(s, high: tuple[str, ...] = (), medium: tuple[str, ...] = ()) -> int:
-    """Higher = port sooner. Foundational-path bonuses come from config, not
-    hard-coded module names, so the framework stays library-agnostic."""
+def _risk(s, high: tuple[str, ...] = (), medium: tuple[str, ...] = (),
+          dep_boost: tuple[str, ...] = ()) -> int:
+    """Higher = port sooner. Foundational-path bonuses + manual dependency hints
+    come from config, not hard-coded module names."""
     score = 0
     if s["is_public"]:
         score += 3
@@ -93,26 +116,72 @@ def _risk(s, high: tuple[str, ...] = (), medium: tuple[str, ...] = ()) -> int:
         score += 1
     if s["kind"] in ("class", "type"):
         score += 1
+    if any(classify._spec_matches(s["path"], s["qualname"] or "", spec) for spec in dep_boost):
+        score += 5                          # unlocks downstream work (#8)
     return score
 
 
-def gaps(db: DB, up_version: str, limit: int | None = None,
-         risk_high: tuple[str, ...] = (), risk_medium: tuple[str, ...] = ()) -> list[dict]:
-    """Unported/partial upstream symbols, ranked by risk then path."""
+# gap_reasons that are intentional/out-of-scope, not real port work
+_SEGMENTED_REASONS = ("ignored", "copied_generated")
+
+
+def gaps(db: DB, up_version: str, limit: int | None = None, cfg=None,
+         risk_high: tuple[str, ...] = (), risk_medium: tuple[str, ...] = (),
+         explain: bool = False) -> list[dict]:
+    """Unported upstream symbols, ranked by risk. With `cfg`, each gap is tagged
+    with a `reason` (see classify.gap_reason); ignored/copied are dropped. With
+    `explain`, the closest in-file target candidate is computed and attached."""
+    high = cfg.risk_high if cfg else risk_high
+    medium = cfg.risk_medium if cfg else risk_medium
+    dep_boost = cfg.dep_boost if cfg else ()
+    m_by_sid = {m["upstream_sid"]: m for m in db.mappings()}
+
+    tgt_by_uppath, rules, target_owner = {}, None, {}
+    if explain and cfg:
+        from . import inventory
+        fc = inventory.file_correspondence(cfg, db)
+        tgt_by_uppath = fc["tgt_by_uppath"]
+        rules = inventory.MappingRules.from_config(cfg)
+        up_by_sid = {s["sid"]: s for s in fc["up_syms"]}
+        for m in db.mappings():
+            if m["target_sid"]:
+                us = up_by_sid.get(m["upstream_sid"])
+                target_owner[m["target_sid"]] = (f"{us['path']}::{us['qualname']}"
+                                                 if us else m["upstream_sid"])
+
     out = []
     for s in db.symbols("upstream", up_version):
         if s["kind"] == "parse_error":
             continue
-        st = _status_of(db, s["sid"])
+        st = m_by_sid[s["sid"]]["status"] if s["sid"] in m_by_sid else Status.NOT_STARTED.value
         if Status(st) in (Status.VERIFIED, Status.DIVERGED, Status.DEPRECATED, Status.ALIASED):
             continue
         if WEIGHT[Status(st)] >= 0.85:
             continue  # implemented but unverified is a *verification* gap, not a port gap
-        out.append({"path": s["path"], "qualname": s["qualname"] or "<file>",
-                    "kind": s["kind"], "status": st, "public": bool(s["is_public"]),
-                    "risk": _risk(s, risk_high, risk_medium)})
+
+        g = {"path": s["path"], "qualname": s["qualname"] or "<file>",
+             "kind": s["kind"], "status": st, "public": bool(s["is_public"]),
+             "risk": _risk(s, high, medium, dep_boost)}
+        if cfg is not None:
+            tm = (inventory_best(s, tgt_by_uppath, rules, target_owner)
+                  if (explain and rules is not None) else None)
+            reason, detail = classify.gap_reason(s, st, m_by_sid.get(s["sid"]), tm, cfg)
+            if reason in _SEGMENTED_REASONS:
+                continue                    # not a real port gap; segmented in coverage
+            g["reason"] = reason
+            if explain:
+                g["detail"] = detail
+                g["target_candidate"] = tm["qualname"] if tm else None
+        out.append(g)
     out.sort(key=lambda g: (-g["risk"], g["path"], g["qualname"]))
     return out[:limit] if limit else out
+
+
+def inventory_best(s, tgt_by_uppath, rules, target_owner):
+    """Thin indirection to inventory.best_target_candidate (kept here to avoid a
+    top-level import cycle)."""
+    from . import inventory
+    return inventory.best_target_candidate(s, tgt_by_uppath, rules, target_owner)
 
 
 def unverified(db: DB, up_version: str) -> list[dict]:

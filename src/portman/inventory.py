@@ -250,17 +250,19 @@ def _resolve_declared(declared: str, up_paths: set[str]) -> str:
     return ""
 
 
-def auto_map(cfg: Config, db: DB) -> dict:
-    rules = MappingRules.from_config(cfg)
+CODE_KINDS = ("file", "test", "module", "parse_error")
+
+
+def file_correspondence(cfg: Config, db: DB) -> dict:
+    """Establish which target file implements which upstream file (provenance
+    header first, path-stem mirroring as fallback) and index target symbols by the
+    upstream path of their file. Shared by auto_map and `gaps --explain`."""
     up_syms = db.symbols("upstream", cfg.upstream.version)
     tg_syms = db.symbols("target", cfg.target.version)
     up_paths = {s["path"] for s in up_syms}
-
-    # file symbols on each side, indexed by path
     up_files = {s["path"]: s for s in up_syms if s["kind"] in ("file", "test", "module")}
     tg_files = {s["path"]: s for s in tg_syms if s["kind"] in ("file", "test", "module")}
 
-    # --- 1. establish file correspondence: target path -> upstream path --------
     tgt_ad = _adapter(cfg, cfg.target.adapter)
     declared: dict[str, prov.Provenance] = {}
     for f in tgt_ad.discover(cfg.target.root):
@@ -272,7 +274,6 @@ def auto_map(cfg: Config, db: DB) -> dict:
     file_corr: dict[str, str] = {}     # target path -> upstream path
     header_confirmed = 0
     for tgt_path in tg_files:
-        # header takes precedence; else fall back to stem mirroring
         up_path = ""
         p = declared.get(tgt_path)
         if p and p.upstream_path:
@@ -284,15 +285,55 @@ def auto_map(cfg: Config, db: DB) -> dict:
         if up_path:
             file_corr[tgt_path] = up_path
 
-    # invert: upstream path -> target symbols in the corresponding file; and the
-    # reverse path map so declared provenance is O(1), not an O(n) scan per symbol.
     tgt_by_uppath: dict[str, list] = {}
     for t in tg_syms:
         up_path = file_corr.get(t["path"])
         if up_path:
             tgt_by_uppath.setdefault(up_path, []).append(t)
-    up_file_to_tgt_file = {v: tg_files[k]["sid"] for k, v in file_corr.items() if k in tg_files}
-    uppath_to_tgtpath = {v: k for k, v in file_corr.items()}
+    return {
+        "up_syms": up_syms, "tg_syms": tg_syms, "declared": declared,
+        "file_corr": file_corr, "tgt_by_uppath": tgt_by_uppath,
+        "header_confirmed": header_confirmed,
+        "up_file_to_tgt_file": {v: tg_files[k]["sid"] for k, v in file_corr.items() if k in tg_files},
+        "uppath_to_tgtpath": {v: k for k, v in file_corr.items()},
+    }
+
+
+def best_target_candidate(u, tgt_by_uppath, rules, target_owner: dict) -> dict | None:
+    """For an UNPORTED upstream symbol, find the closest in-file target and explain
+    why it isn't linked: taken by another upstream, kind-incompatible, or just a
+    near name (needs a forced link). Returns None if no candidate at all."""
+    best, best_sc = None, 0
+    for t in tgt_by_uppath.get(u["path"], []):
+        if t["kind"] in CODE_KINDS:
+            continue
+        sc = _match_score(u, t, rules)
+        if sc > best_sc:
+            best, best_sc = t, sc
+    if best:
+        return {"qualname": best["qualname"], "kind": best["kind"],
+                "taken_by": target_owner.get(best["sid"]), "kind_mismatch": False}
+    # no kind-compatible match — is there a same-name target of an incompatible kind?
+    us, uw = _symbol_forms(u, rules, "upstream")
+    wanted = us | uw
+    for t in tgt_by_uppath.get(u["path"], []):
+        if t["kind"] in CODE_KINDS:
+            continue
+        ts, tw = _symbol_forms(t, rules, "target")
+        if wanted & (ts | tw):
+            return {"qualname": t["qualname"], "kind": t["kind"],
+                    "taken_by": None, "kind_mismatch": True}
+    return None
+
+
+def auto_map(cfg: Config, db: DB) -> dict:
+    rules = MappingRules.from_config(cfg)
+    fc = file_correspondence(cfg, db)
+    up_syms, tg_syms = fc["up_syms"], fc["tg_syms"]
+    declared = fc["declared"]
+    file_corr, tgt_by_uppath = fc["file_corr"], fc["tgt_by_uppath"]
+    up_file_to_tgt_file, uppath_to_tgtpath = fc["up_file_to_tgt_file"], fc["uppath_to_tgtpath"]
+    header_confirmed = fc["header_confirmed"]
 
     # Human-owned mappings (manual/review/ambiguous-resolved/aliased) are locked:
     # they neither compete for targets nor get clobbered, so an explicit alias
@@ -306,12 +347,11 @@ def auto_map(cfg: Config, db: DB) -> dict:
     best_for_target: dict[str, tuple[int, str]] = {}     # t_sid -> (score, u_sid)
     tie_for_target: dict[str, bool] = {}
     cand_for_upstream: dict[str, list[tuple[int, str]]] = {}
-    code_kinds = ("file", "test", "module", "parse_error")
     for u in up_syms:
-        if u["kind"] in code_kinds or u["sid"] in locked:
+        if u["kind"] in CODE_KINDS or u["sid"] in locked:
             continue
         for t in tgt_by_uppath.get(u["path"], []):
-            if t["kind"] in code_kinds:
+            if t["kind"] in CODE_KINDS:
                 continue
             sc = _match_score(u, t, rules)
             if not sc:

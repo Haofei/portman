@@ -30,6 +30,16 @@ class Config:
     risk_medium: tuple[str, ...] = ()
     # project-specific cross-language naming conventions; see inventory.MappingRules
     mapping: dict = field(default_factory=dict)
+    # source-area name -> path prefixes, for coverage-by-area (#5)
+    areas: dict = field(default_factory=dict)
+    # roots that are copied/generated, not hand-ported (#6): list of path prefixes
+    copied_roots: tuple[str, ...] = ()
+    # reasoned suppressions (#7): "path" or "path::Qual" or "path::*" -> reason
+    ignore: dict = field(default_factory=dict)
+    # manual dependency hints (#8): upstream "path::Qual" specs to rank earlier
+    dep_boost: tuple[str, ...] = ()
+    # declared gap-reason overrides (#2): "path::Qual"/"path::*" -> reason
+    gap_reasons: dict = field(default_factory=dict)
     root: Path = Path(".")
 
     @classmethod
@@ -57,4 +67,9 @@ class Config:
             risk_high=tuple(risk.get("high", [])),
             risk_medium=tuple(risk.get("medium", [])),
             mapping=data.get("mapping", {}),
+            areas={k: list(v) for k, v in data.get("areas", {}).items()},
+            copied_roots=tuple(data.get("copied", {}).get("roots", [])),
+            ignore=dict(data.get("ignore", {})),
+            dep_boost=tuple(data.get("deps", {}).get("boost", [])),
+            gap_reasons=dict(data.get("gap_reasons", {})),
             root=root)
