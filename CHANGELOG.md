@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased — refactoring pass (10 targets)
+
+Completes the 10-item refactor list. Highlights beyond the per-commit notes below:
+
+- **Tooling/layering (#7):** `pyproject.toml` adds ruff + import-linter config
+  (run via `make lint` when installed). Since neither is installable offline, a
+  dependency-free **`tests/layering.py`** enforces the same contracts in
+  `make test` — e.g. the matcher may not import orchestration; the foundation
+  layers stay leaf-level. 8 module contracts, wired into the suite.
+- **Polish (#10):** `report.py` capped bullet-list sections (verification backlog,
+  deviations, aliases, ambiguous) use one `_section()` helper. Deliberately left
+  the table-building and `classify.gap_reason` signature alone (refactoring them
+  would add complexity for no real gain).
+
+## Unreleased — extract health.py; group commands into a package
+
 ## Unreleased — split the CLI; DRY the read model
 
 - **Refactor: `commands.py`.** The CLI god-file (584 lines mixing command logic

@@ -1,0 +1,50 @@
+[project]
+name = "portman"
+version = "0.1.0"
+description = "Language-agnostic framework for managing a strict 1:1 upstream->target port"
+requires-python = ">=3.11"          # tomllib
+dependencies = []                    # stdlib only
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+# --- ruff: lint + import hygiene (run `ruff check src tests`) -----------------
+[tool.ruff]
+line-length = 110
+src = ["src", "tests"]
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]  # pyflakes, pycodestyle, isort, pyupgrade, bugbear
+ignore = ["E701", "E702"]            # we use compact one-liners deliberately
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["E402"]                 # harness sets sys.path before imports
+
+# --- import-linter: enforce the module layering (run `lint-imports`) ----------
+# A dependency-free mirror of these contracts also runs in tests/layering.py.
+[tool.importlinter]
+root_package = "portman"
+
+[[tool.importlinter.contracts]]
+name = "Matcher is the agnostic core (no orchestration deps)"
+type = "forbidden"
+source_modules = ["portman.matching"]
+forbidden_modules = [
+    "portman.inventory", "portman.progress", "portman.report",
+    "portman.commands", "portman.cli", "portman.diff", "portman.classify",
+]
+
+[[tool.importlinter.contracts]]
+name = "Layered architecture"
+type = "layers"
+layers = [
+    "portman.cli",
+    "portman.commands",
+    "portman.report",
+    "portman.progress",
+    "portman.inventory | portman.diff",
+    "portman.matching | portman.classify",
+    "portman.db | portman.provenance | portman.adapters",
+    "portman.config | portman.model",
+]

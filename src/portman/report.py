@@ -6,12 +6,22 @@ import json
 from pathlib import Path
 
 from .db import DB
-from . import progress, diff as diffmod
+from . import progress
 
 
 def _bar(pct: float, width: int = 24) -> str:
     fill = int(round(pct / 100 * width))
     return "█" * fill + "░" * (width - fill)
+
+
+def _section(L: list, title: str, items: list, fmt, limit: int = 25) -> None:
+    """Append a '## title — N' section with a capped, formatted bullet list."""
+    L.append(f"## {title} — {len(items)}\n")
+    for x in items[:limit]:
+        L.append(fmt(x))
+    if len(items) > limit:
+        L.append(f"- … +{len(items) - limit} more")
+    L.append("")
 
 
 def dashboard_md(db: DB, up_version: str, cfg=None) -> str:
@@ -67,34 +77,18 @@ def dashboard_md(db: DB, up_version: str, cfg=None) -> str:
                  f"| {g['status']} | {'✓' if g['public'] else ''} |")
     L.append("")
 
-    L.append(f"## Verification backlog (implemented, not verified) — {len(unv)}\n")
-    for u in unv[:25]:
-        L.append(f"- `{u['path']}` `{u['qualname']}` — verification: {u['verification'] or 'none'}"
-                 + (f" — owner {u['owner']}" if u['owner'] else ""))
-    if len(unv) > 25:
-        L.append(f"- … +{len(unv) - 25} more")
-    L.append("")
-
-    L.append(f"## Documented deviations — {len(dv)}\n")
-    for d in dv:
-        L.append(f"- `{d['path']}` `{d['qualname']}` — {d['deviation_id'] or '(no id)'}: {d['note']}")
-    L.append("")
-
+    _section(L, "Verification backlog (implemented, not verified)", unv,
+             lambda u: f"- `{u['path']}` `{u['qualname']}` — verification: {u['verification'] or 'none'}"
+                       + (f" — owner {u['owner']}" if u['owner'] else ""))
+    _section(L, "Documented deviations", dv,
+             lambda d: f"- `{d['path']}` `{d['qualname']}` — {d['deviation_id'] or '(no id)'}: {d['note']}",
+             limit=len(dv) or 1)
     if al:
-        L.append(f"## Aliases / covered-by (intentional, target shared) — {len(al)}\n")
-        for a in al[:25]:
-            L.append(f"- `{a['path']}` `{a['qualname']}` — covered by `{a['covers']}`")
-        if len(al) > 25:
-            L.append(f"- … +{len(al) - 25} more")
-        L.append("")
-
+        _section(L, "Aliases / covered-by (intentional, target shared)", al,
+                 lambda a: f"- `{a['path']}` `{a['qualname']}` — covered by `{a['covers']}`")
     if amb:
-        L.append(f"## Ambiguous links needing disambiguation — {len(amb)}\n")
-        for a in amb[:25]:
-            L.append(f"- `{a['path']}` `{a['qualname']}` — {a['note']}")
-        if len(amb) > 25:
-            L.append(f"- … +{len(amb) - 25} more")
-        L.append("")
+        _section(L, "Ambiguous links needing disambiguation", amb,
+                 lambda a: f"- `{a['path']}` `{a['qualname']}` — {a['note']}")
     return "\n".join(L)
 
 

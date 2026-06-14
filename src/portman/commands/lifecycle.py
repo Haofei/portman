@@ -6,7 +6,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from ._shared import _cfg, _ctx
+from ._shared import _ctx
 from .. import inventory, diff as diffmod, report as reportmod
 from ..model import Side
 

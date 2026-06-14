@@ -44,11 +44,15 @@ test:
 		$(PY) -m pytest -q tests; \
 	else \
 		echo "pytest not installed — running dependency-free test runners"; \
-		$(PY) tests/smoke.py && $(PY) tests/name_matching.py && $(PY) tests/classification.py && $(PY) tests/inventory_ingest.py && $(PY) tests/agnostic.py; \
+		$(PY) tests/smoke.py && $(PY) tests/name_matching.py && $(PY) tests/classification.py && $(PY) tests/inventory_ingest.py && $(PY) tests/agnostic.py && $(PY) tests/layering.py; \
 	fi
 
 pytest:
 	$(PY) -m pytest -q tests
+
+lint:        ## ruff + import-linter (no-ops with a note if not installed)
+	@command -v ruff >/dev/null && ruff check src tests || echo "ruff not installed — skipping (config in pyproject.toml)"
+	@command -v lint-imports >/dev/null && lint-imports || echo "import-linter not installed — tests/layering.py enforces the same contracts"
 
 clean:
 	rm -f mappings/port.db

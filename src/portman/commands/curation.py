@@ -1,7 +1,7 @@
 """Curation commands: set, alias, link, trace, export, import."""
 from __future__ import annotations
 
-from ._shared import _cfg, _db, _ctx
+from ._shared import _cfg, _ctx
 from ..db import DB
 from ..model import Mapping, symbol_id, Status, Confidence, Side
 
