@@ -1,0 +1,31 @@
+# Copy to portman.toml and edit, or generate with:
+#   portman init --project myport \
+#     --upstream-root ../upstream/pkg --upstream-adapter python \
+#     --target-root ../target/src    --target-adapter rss \
+#     --upstream-version HEAD
+#
+# Paths are relative to this file. Adapters: built-in "python", "rss", or define
+# a generic regex adapter under [adapters.<name>] (see the [adapters.go] example
+# in the committed portman.toml).
+project = "myport"
+
+db = "mappings/port.db"
+reports = "reports"
+
+[upstream]
+repo = "upstream"
+root = "../upstream/pkg"
+adapter = "python"
+version = "HEAD"
+exclude = ["__pycache__"]
+
+[target]
+repo = "target"
+root = "../target/src"
+adapter = "rss"
+version = "working"
+exclude = ["__pycache__"]
+
+[risk]
+high = []      # e.g. ["core", "api"] — substrings of foundational upstream paths
+medium = []

@@ -1,25 +1,31 @@
 # portman project configuration for the tinygrad -> tinygrad-rsmc port.
+# Paths are RELATIVE to this file, so a clone placed next to the source repos
+# works unchanged. Regenerate for a fresh port with `portman init`.
 project = "tinygrad-rsmc"
 
-# Where the queryable DB and generated reports live.
 db = "mappings/port.db"
 reports = "reports"
 
 [upstream]
 repo = "tinygrad"
-root = "/home/zoe/tinygrad/tinygrad"          # the Python package, not the whole repo
+root = "../tinygrad/tinygrad"                 # the Python package, not the whole repo
 adapter = "python"
 version = "fa400f9790ab9a684387b02e958658217b33e7c1"   # pinned baseline (v0.13.0-160)
-# runtime/autogen is machine-generated and vendored verbatim; it is not a
-# hand-port target, so it is excluded from the porting denominator.
+# runtime/autogen is machine-generated and vendored verbatim; not a hand-port target.
 exclude = ["runtime/autogen", "__pycache__"]
 
 [target]
 repo = "tinygrad-rss"
-root = "/home/zoe/tinygrad-rsmc/tinygrad-rss/src"
+root = "../tinygrad-rsmc/tinygrad-rss/src"
 adapter = "rss"
-version = "working"                            # target tracks the working tree
+version = "working"                           # target tracks the working tree
 exclude = ["vendor", "__pycache__"]
+
+# Foundational-path bonuses for gap risk ranking. Library-specific and optional;
+# kept in config (not hard-coded) so the framework stays library-agnostic.
+[risk]
+high = ["dtype", "uop/ops", "tensor", "device", "helpers"]
+medium = ["nn", "engine", "runtime", "codegen", "renderer"]
 
 # Example of adding a brand-new target language with zero code, via the generic
 # regex adapter. Reference only — not used by the tinygrad port above.

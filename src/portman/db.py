@@ -48,6 +48,11 @@ CREATE TABLE IF NOT EXISTS deviations (
 CREATE TABLE IF NOT EXISTS snapshots (
   ts TEXT, upstream_version TEXT, metric TEXT, value REAL
 );
+
+CREATE TABLE IF NOT EXISTS parse_errors (
+  side TEXT, version TEXT, path TEXT, error TEXT,
+  PRIMARY KEY (side, version, path)
+);
 """
 
 
@@ -67,6 +72,23 @@ class DB:
             ":end_lineno,:version,:sig_hash,:body_hash,:is_public)",
             [{**s.to_row(), "is_public": int(s.is_public)} for s in syms])
         self.c.commit()
+
+    def replace_parse_errors(self, side: str, version: str, errors: list[dict]):
+        self.c.execute("DELETE FROM parse_errors WHERE side=? AND version=?", (side, version))
+        self.c.executemany("INSERT OR REPLACE INTO parse_errors VALUES (?,?,?,?)",
+                           [(side, version, e["path"], e["error"]) for e in errors])
+        self.c.commit()
+
+    def parse_errors(self, side: str, version: str) -> list[sqlite3.Row]:
+        return self.c.execute("SELECT * FROM parse_errors WHERE side=? AND version=?",
+                              (side, version)).fetchall()
+
+    def duplicate_targets(self) -> list[sqlite3.Row]:
+        """Target symbols claimed by more than one mapping — a 1:1 violation unless
+        intentional (then it needs a deviation)."""
+        return self.c.execute(
+            "SELECT target_sid, COUNT(*) n FROM mappings WHERE target_sid IS NOT NULL "
+            "GROUP BY target_sid HAVING n>1 ORDER BY n DESC").fetchall()
 
     def symbols(self, side: str, version: str, kind: str | None = None) -> list[sqlite3.Row]:
         q = "SELECT * FROM symbols WHERE side=? AND version=?"

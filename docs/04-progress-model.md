@@ -27,17 +27,31 @@ are out of the "to-do" denominator, not silently missing.
 `none → signature → golden → differential → fuzz → ported_tests`. Promotion to
 status `verified` requires at least `differential` (configurable per project).
 
-## Scoring
+## Scoring — separate dimensions, never one blended number
 
-- **Weighted %** = Σ weight / N — the single headline number (42.6% today).
-- **Public-API %** = public symbols at ≥`implemented` / public total (54.1%).
-  Public/internal is derived from the leading-underscore convention at extraction.
-- **Verified %** = `verified` / N (0.0% until verification is wired).
+`coverage()` deliberately reports several non-collapsed dimensions, because a
+single headline % overstates parity (it lets "implemented" hide "unverified", and
+lets file/test inventory pad the API number). Current reference values:
 
-Computed per `kind` too, which surfaced a real insight on the reference port:
+- **Symbol coverage** = real symbols at ≥`implemented` / all real symbols — **43.8%**.
+- **Public-API coverage** = public **API-kind** symbols (class/function/method/
+  constant/type) at ≥`implemented` / public API total — **44.6%** of 2,285.
+  Files, modules, and tests are **excluded** from this denominator and reported
+  on their own axes.
+- **File coverage** = **100.0%** (every upstream file has a corresponding target file).
+- **Verified %** = behaviorally proven / all — **0.0%** until verification is wired.
+- **Weighted %** (planning only) = Σ weight / N — **37.3%**.
+- **Parse errors** are excluded from every denominator and surfaced separately, so
+  a file that fails to parse can never inflate the numbers.
+
+Public/internal is derived from the leading-underscore convention at extraction.
+
+Computed per `kind` too, which surfaces a real insight on the reference port:
 **function/method name-coverage is high but class-level structural correspondence
-is low** (24/404 classes) — because `rsscript` models Python classes as `struct`s
-with method functions rather than 1:1 named types.
+is lower** — because `rsscript` models Python classes as `struct`s with method
+functions rather than 1:1 named types. Note the auto-mapper **refuses
+name-collision matches** (206 flagged ambiguous), so these numbers do not
+double-count one target function against many upstream methods of the same name.
 
 ## Ownership & review
 

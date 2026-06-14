@@ -9,8 +9,11 @@
   portman snapshot --version REF    re-extract upstream at a git ref into the DB
   portman diff OLD NEW              upstream change report between two snapshots
   portman set STATUS --upstream ... manually set a mapping's status/owner (curated)
-  portman trace PATH[:QUALNAME]     show the full provenance/verification record
-  portman export / import           sync curated facts to mappings/curated.jsonl
+  portman trace PATH[::QUALNAME]    show the full provenance/verification record
+  portman export                    write curated facts to mappings/curated.jsonl
+  portman import                    load curated facts from mappings/curated.jsonl
+  portman init --upstream-root ...  generate a portman.toml for a new port
+  portman doctor                    validate the setup before trusting numbers
 """
 from __future__ import annotations
 
@@ -40,16 +43,20 @@ def _db(cfg: Config) -> DB:
 
 def cmd_inventory(args):
     cfg = _cfg(args); db = _db(cfg)
-    r = inventory.build_inventory(cfg, db)
+    r = inventory.build_inventory(cfg, db, allow_parse_errors=not args.strict)
     print(f"upstream: {r['upstream_symbols']} symbols @ {cfg.upstream.version or 'working'}")
     print(f"target:   {r['target_symbols']} symbols")
+    if r["parse_errors"]:
+        print(f"⚠️  parse errors: {r['parse_errors']} (excluded from coverage; "
+              f"see `portman doctor`). Use --strict to fail on these.")
 
 
 def cmd_map(args):
     cfg = _cfg(args); db = _db(cfg)
     r = inventory.auto_map(cfg, db)
     print(f"file pairs: {r['file_pairs']}  (header-confirmed: {r['header_confirmed']})")
-    print(f"auto-linked symbols: {r['linked']}  (proposed implemented: {r['proposed']})")
+    print(f"auto-linked symbols: {r['linked']}  "
+          f"(ambiguous/unlinked name-collisions: {r['ambiguous']})")
 
 
 def cmd_status(args):
@@ -58,9 +65,13 @@ def cmd_status(args):
     if args.json:
         print(json.dumps(cov, indent=2)); return
     print(f"upstream {cov['upstream_version'] or 'working'}: {cov['total_symbols']} symbols")
-    print(f"  weighted ported : {cov['weighted_pct']}%")
-    print(f"  public API      : {cov['public_api_pct']}%  ({cov['public_total']} public)")
+    print(f"  symbol coverage : {cov['symbol_pct']}%")
+    print(f"  public API      : {cov['public_api_pct']}%  ({cov['public_total']} API symbols)")
+    print(f"  file coverage   : {cov['file_pct']}%")
     print(f"  verified        : {cov['verified_pct']}%")
+    print(f"  weighted (plan) : {cov['weighted_pct']}%")
+    if cov["parse_errors"]:
+        print(f"  parse errors    : {cov['parse_errors']} (excluded)")
     print("  by status:")
     for k, v in sorted(cov["by_status"].items(), key=lambda x: -x[1]):
         print(f"    {k:14} {v}")
@@ -68,7 +79,8 @@ def cmd_status(args):
 
 def cmd_gaps(args):
     cfg = _cfg(args); db = _db(cfg)
-    gp = progress.gaps(db, cfg.upstream.version, limit=args.limit)
+    gp = progress.gaps(db, cfg.upstream.version, limit=args.limit,
+                       risk_high=cfg.risk_high, risk_medium=cfg.risk_medium)
     if args.public:
         gp = [g for g in gp if g["public"]]
     for g in gp:
@@ -78,8 +90,10 @@ def cmd_gaps(args):
 
 def cmd_report(args):
     cfg = _cfg(args); db = _db(cfg)
-    cov = reportmod.write_all(db, cfg.upstream.version, cfg.reports_dir)
-    print(f"wrote {cfg.reports_dir}/dashboard.md  ({cov['weighted_pct']}% weighted)")
+    cov = reportmod.write_all(db, cfg.upstream.version, cfg.reports_dir,
+                              risk_high=cfg.risk_high, risk_medium=cfg.risk_medium)
+    print(f"wrote {cfg.reports_dir}/dashboard.md  "
+          f"(symbol {cov['symbol_pct']}%, public-API {cov['public_api_pct']}%)")
 
 
 def cmd_provenance(args):
@@ -173,8 +187,9 @@ def cmd_trace(args):
                 print(f"  status={m['status']} verification={m['verification']} "
                       f"confidence={m['confidence']} owner={m['owner'] or '-'}")
                 if m["target_sid"]:
-                    t = db.c.execute("SELECT * FROM symbols WHERE sid=? AND side='target'",
-                                     (m["target_sid"],)).fetchone()
+                    t = db.c.execute(
+                        "SELECT * FROM symbols WHERE sid=? AND side='target' AND version=?",
+                        (m["target_sid"], cfg.target.version)).fetchone()
                     if t:
                         print(f"  -> TARGET {t['path']}::{t['qualname']} L{t['lineno']}")
                 if m["deviation_id"]:
@@ -192,13 +207,131 @@ def cmd_export(args):
     print("exported curated facts -> mappings/curated.jsonl")
 
 
+def cmd_import(args):
+    """Re-load curated facts from mappings/curated.jsonl into the DB. (Also done
+    automatically on every DB open; this is the explicit form.)"""
+    cfg = _cfg(args); db = DB(cfg.db_path)
+    path = cfg.root / "mappings" / "curated.jsonl"
+    db.import_curated(path)
+    print(f"imported curated facts <- {path}")
+
+
+TOML_TEMPLATE = '''\
+project = "{project}"
+db = "mappings/port.db"
+reports = "reports"
+
+[upstream]
+repo = "{up_repo}"
+root = "{up_root}"
+adapter = "{up_adapter}"
+version = "{up_version}"
+exclude = ["__pycache__"]
+
+[target]
+repo = "{tg_repo}"
+root = "{tg_root}"
+adapter = "{tg_adapter}"
+version = "working"
+exclude = ["__pycache__"]
+
+# Foundational-path bonuses for gap risk ranking (library-specific, optional).
+[risk]
+high = []
+medium = []
+'''
+
+
+def cmd_init(args):
+    out = Path(args.config)
+    if out.exists() and not args.force:
+        print(f"refusing to overwrite existing {out} (use --force)"); return 1
+    out.write_text(TOML_TEMPLATE.format(
+        project=args.project, up_repo=args.upstream_repo, up_root=args.upstream_root,
+        up_adapter=args.upstream_adapter, up_version=args.upstream_version,
+        tg_repo=args.target_repo, tg_root=args.target_root, tg_adapter=args.target_adapter))
+    print(f"wrote {out}. Next: portman --config {out} doctor && make all")
+
+
+def cmd_doctor(args):
+    """Validate that the setup is sane before trusting any numbers."""
+    cfg = _cfg(args)
+    checks: list[tuple[str, str, str]] = []   # (level, name, detail)
+
+    def add(ok, name, detail="", warn=False):
+        checks.append(("PASS" if ok else ("WARN" if warn else "FAIL"), name, detail))
+
+    add(cfg.upstream.root.is_dir(), "upstream root exists", str(cfg.upstream.root))
+    add(cfg.target.root.is_dir(), "target root exists", str(cfg.target.root))
+    # git repo for upstream (needed for `snapshot`)
+    git_ok = subprocess.run(["git", "-C", str(cfg.upstream.root), "rev-parse", "--show-toplevel"],
+                            capture_output=True).returncode == 0
+    add(git_ok, "upstream is a git repo (for snapshot)", "", warn=not git_ok)
+    # adapters loadable
+    try:
+        _adapter_check(cfg); add(True, "adapters loadable",
+                                 f"{cfg.upstream.adapter}, {cfg.target.adapter}")
+    except Exception as e:
+        add(False, "adapters loadable", str(e))
+    # reports dir writable
+    try:
+        cfg.reports_dir.mkdir(parents=True, exist_ok=True)
+        add(True, "reports dir writable", str(cfg.reports_dir))
+    except Exception as e:
+        add(False, "reports dir writable", str(e))
+    # curated jsonl valid
+    cur = cfg.root / "mappings" / "curated.jsonl"
+    add(_curated_valid(cur), "curated.jsonl parses", str(cur))
+
+    # DB-derived checks (only if the DB exists)
+    if cfg.db_path.exists():
+        db = DB(cfg.db_path)
+        pe = db.parse_errors("upstream", cfg.upstream.version) + db.parse_errors("target", cfg.target.version)
+        add(not pe, f"no parse errors ({len(pe)})", "; ".join(r["path"] for r in pe[:3]), warn=bool(pe))
+        dups = db.duplicate_targets()
+        add(not dups, f"no duplicate target mappings ({len(dups)})",
+            "run `portman map` after fixes", warn=bool(dups))
+        bad_dev = [r for r in db.mappings()
+                   if r["status"] == Status.DIVERGED.value and not r["deviation_id"]]
+        add(not bad_dev, f"diverged mappings have deviation ids ({len(bad_dev)})")
+    else:
+        add(True, "database present", "(not built yet — run `portman inventory`)", warn=True)
+
+    fails = sum(1 for lv, *_ in checks if lv == "FAIL")
+    for lv, name, detail in checks:
+        mark = {"PASS": "✓", "WARN": "•", "FAIL": "✗"}[lv]
+        print(f"  {mark} [{lv}] {name}" + (f" — {detail}" if detail else ""))
+    print(f"\n{len(checks)} checks, {fails} failing")
+    return 1 if fails else 0
+
+
+def _adapter_check(cfg):
+    from .adapters import get_adapter
+    get_adapter(cfg.upstream.adapter, cfg.generic_adapters.get(cfg.upstream.adapter))
+    get_adapter(cfg.target.adapter, cfg.generic_adapters.get(cfg.target.adapter))
+
+
+def _curated_valid(path: Path) -> bool:
+    if not path.exists():
+        return True
+    try:
+        for line in path.read_text().splitlines():
+            line = line.strip()
+            if line and not line.startswith("#"):
+                json.loads(line)
+        return True
+    except Exception:
+        return False
+
+
 def build_parser():
     p = argparse.ArgumentParser(prog="portman", description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--config", default="portman.toml")
     sub = p.add_subparsers(dest="cmd", required=True)
 
-    sub.add_parser("inventory").set_defaults(func=cmd_inventory)
+    s = sub.add_parser("inventory"); s.add_argument("--strict", action="store_true",
+        help="fail if any file fails to parse"); s.set_defaults(func=cmd_inventory)
     sub.add_parser("map").set_defaults(func=cmd_map)
     s = sub.add_parser("status"); s.add_argument("--json", action="store_true"); s.set_defaults(func=cmd_status)
     s = sub.add_parser("gaps"); s.add_argument("--limit", type=int, default=40)
@@ -215,6 +348,19 @@ def build_parser():
     s.add_argument("--deviation", default=""); s.add_argument("--note", default=""); s.set_defaults(func=cmd_set)
     s = sub.add_parser("trace"); s.add_argument("target"); s.set_defaults(func=cmd_trace)
     sub.add_parser("export").set_defaults(func=cmd_export)
+    sub.add_parser("import").set_defaults(func=cmd_import)
+    sub.add_parser("doctor").set_defaults(func=cmd_doctor)
+    s = sub.add_parser("init")
+    s.add_argument("--project", default="myport")
+    s.add_argument("--upstream-root", dest="upstream_root", required=True)
+    s.add_argument("--target-root", dest="target_root", required=True)
+    s.add_argument("--upstream-adapter", dest="upstream_adapter", default="python")
+    s.add_argument("--target-adapter", dest="target_adapter", default="rss")
+    s.add_argument("--upstream-repo", dest="upstream_repo", default="upstream")
+    s.add_argument("--target-repo", dest="target_repo", default="target")
+    s.add_argument("--upstream-version", dest="upstream_version", default="HEAD")
+    s.add_argument("--force", action="store_true")
+    s.set_defaults(func=cmd_init)
     return p
 
 

@@ -24,6 +24,10 @@ class Config:
     db_path: Path
     reports_dir: Path
     generic_adapters: dict = field(default_factory=dict)
+    # foundational-path bonuses for gap risk ranking — config, not hard-coded,
+    # so the framework is library-agnostic.
+    risk_high: tuple[str, ...] = ()
+    risk_medium: tuple[str, ...] = ()
     root: Path = Path(".")
 
     @classmethod
@@ -40,6 +44,7 @@ class Config:
                 version=d.get("version", ""),
                 exclude=tuple(d.get("exclude", [])))
 
+        risk = data.get("risk", {})
         return cls(
             project=data["project"],
             upstream=side(data["upstream"]),
@@ -47,4 +52,6 @@ class Config:
             db_path=(root / data.get("db", "mappings/port.db")),
             reports_dir=(root / data.get("reports", "reports")),
             generic_adapters=data.get("adapters", {}),
+            risk_high=tuple(risk.get("high", [])),
+            risk_medium=tuple(risk.get("medium", [])),
             root=root)

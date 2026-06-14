@@ -5,7 +5,21 @@
   "description": "One curated mapping between an upstream symbol and its target implementation. The auto-mapper produces these with confidence=auto; humans promote them.",
   "type": "object",
   "required": ["upstream_sid", "status"],
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {"properties": {"status": {"const": "diverged"}}},
+      "then": {"required": ["deviation_id"],
+               "properties": {"deviation_id": {"type": "string", "minLength": 1}}}
+    },
+    {
+      "if": {"properties": {"status": {"enum": ["implemented", "verified"]}}},
+      "then": {"required": ["target_sid"],
+               "properties": {"target_sid": {"type": "string", "minLength": 1}}}
+    }
+  ],
   "properties": {
+    "type": {"const": "mapping", "description": "discriminator in curated.jsonl"},
     "upstream_sid": {"type": "string", "description": "16-hex stable id of the upstream symbol (sha1 of repo::path::qualname::kind)."},
     "target_sid": {"type": ["string", "null"], "description": "Stable id of the linked target symbol, or null if unported."},
     "status": {"enum": ["not_started", "in_progress", "partial", "implemented", "verified", "diverged", "deprecated"]},

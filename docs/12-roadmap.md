@@ -11,7 +11,8 @@ running** against the reference repos.
 ## Phase 1 — Mapping ✅ (done)
 - Path-mirroring + provenance-header + name-matching auto-linker (`portman map`).
 - Curated JSONL source of truth; manual `portman set`.
-- Outcome: 121 file pairs, 1,650 symbols linked, 42.6% weighted.
+- Collision-safe matching (target uniqueness; ambiguous links flagged, not over-claimed).
+- Outcome: 121 file pairs, 1,444 symbols linked (206 ambiguous), 43.8% symbol / 44.6% public-API.
 - Exit: every upstream symbol has a mapping row (linked or `not_started`).
 
 ## Phase 2 — Progress & reporting ✅ (done)

@@ -12,7 +12,7 @@ runner). Install it as `.github/workflows/portman.yml` in the **target** repo.
 
 1. **Provenance** — `portman provenance lint`; fail if any file is missing a
    header beyond `PORTMAN_MAX_MISSING`. Drives headers to 100% over time.
-2. **No port regression** — compare `portman status --json:weighted_pct` to a
+2. **No port regression** — compare `portman status --json:public_api_pct` to a
    committed `port_floor.txt`; fail if it drops. Bump the floor when you make
    progress (ratchet).
 3. **Deviations documented** — fail if any mapping has `status=diverged` without a

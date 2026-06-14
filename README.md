@@ -15,14 +15,19 @@ target language via pluggable adapters.
 > | Upstream symbols inventoried | **3,303** (118 files, excl. `runtime/autogen`) |
 > | Target symbols inventoried | **3,859** |
 > | File pairs established (path-mirroring + headers) | **121** |
-> | Symbols auto-linked | **1,650** |
-> | Weighted port completion | **42.6%** |
-> | Public-API completion | **54.1%** of 2,403 public symbols |
+> | Symbols auto-linked | **1,444** |
+> | Name-collision links flagged ambiguous (NOT counted) | **206** |
+> | Symbol coverage | **43.8%** |
+> | Public-API coverage | **44.6%** of 2,285 API symbols |
+> | File coverage | **100.0%** |
 > | Verified | **0.0%** (verification axis not yet wired) |
 >
-> This is intentionally *stricter* than the existing `PORT_AUDIT.md`'s "100% rough
-> coverage": portman requires a symbol to be matched **inside its corresponding
-> file**, not merely present somewhere in the tree.
+> These are deliberately conservative. portman requires a symbol to be matched
+> **inside its corresponding file** (stricter than `PORT_AUDIT.md`'s "100% rough
+> coverage"), counts only real API kinds in the public-API denominator (files are
+> reported separately), and **refuses to count name-collision matches** — e.g. six
+> classes' `init_hw` methods do not all get to claim one `fn init_hw`; they are
+> flagged ambiguous for a human to disambiguate.
 
 ---
 

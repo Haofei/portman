@@ -13,32 +13,42 @@ from .base import Adapter, h
 
 
 def _sig(node) -> str:
-    """Normalize a function signature to a stable string: names + defaults arity
-    + annotations (as source text). Whitespace-insensitive."""
+    """Normalize a function signature to a stable string capturing everything that
+    can change a callable's contract: positional/kw-only/var arity & order,
+    parameter names, annotations, *actual default value expressions*, return
+    annotation, async-ness, and decorators (e.g. @property/@staticmethod/
+    @overload). Whitespace-insensitive. So `f(x=1)` vs `f(x=2)` and a dropped
+    @property both change the hash."""
     a = node.args
+    # map each positional arg to its default expression (right-aligned)
+    pos = list(a.posonlyargs) + list(a.args)
+    pos_defaults = [None] * (len(pos) - len(a.defaults)) + list(a.defaults)
     parts: list[str] = []
-    for arg in a.posonlyargs:
-        parts.append(_arg(arg))
+    for arg, dflt in zip(a.posonlyargs, pos_defaults[:len(a.posonlyargs)]):
+        parts.append(_arg(arg, dflt))
     if a.posonlyargs:
         parts.append("/")
-    for arg in a.args:
-        parts.append(_arg(arg))
+    for arg, dflt in zip(a.args, pos_defaults[len(a.posonlyargs):]):
+        parts.append(_arg(arg, dflt))
     if a.vararg:
-        parts.append("*" + _arg(a.vararg))
+        parts.append("*" + _arg(a.vararg, None))
     elif a.kwonlyargs:
         parts.append("*")
-    for arg in a.kwonlyargs:
-        parts.append(_arg(arg))
+    for arg, dflt in zip(a.kwonlyargs, a.kw_defaults):
+        parts.append(_arg(arg, dflt))
     if a.kwarg:
-        parts.append("**" + _arg(a.kwarg))
+        parts.append("**" + _arg(a.kwarg, None))
     ret = f" -> {ast.unparse(node.returns)}" if node.returns else ""
-    ndef = len(a.defaults) + len([d for d in a.kw_defaults if d is not None])
-    return f"({', '.join(parts)}){ret} [defaults={ndef}]"
+    prefix = "async " if isinstance(node, ast.AsyncFunctionDef) else ""
+    decos = ",".join(ast.unparse(d) for d in node.decorator_list)
+    deco = f" @[{decos}]" if decos else ""
+    return f"{prefix}({', '.join(parts)}){ret}{deco}"
 
 
-def _arg(arg) -> str:
+def _arg(arg, default) -> str:
     ann = f": {ast.unparse(arg.annotation)}" if arg.annotation else ""
-    return f"{arg.arg}{ann}"
+    dflt = f"={ast.unparse(default)}" if default is not None else ""
+    return f"{arg.arg}{ann}{dflt}"
 
 
 class PythonAdapter(Adapter):

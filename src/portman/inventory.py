@@ -27,30 +27,55 @@ def _adapter(cfg: Config, name: str):
     return get_adapter(name, cfg.generic_adapters.get(name))
 
 
-def build_inventory(cfg: Config, db: DB) -> dict:
+def build_inventory(cfg: Config, db: DB, allow_parse_errors: bool = True) -> dict:
     up_ad = _adapter(cfg, cfg.upstream.adapter)
     tg_ad = _adapter(cfg, cfg.target.adapter)
     up = up_ad.extract_tree(cfg.upstream.root, "upstream", cfg.upstream.repo,
-                            cfg.upstream.version, cfg.upstream.exclude)
+                            cfg.upstream.version, cfg.upstream.exclude, allow_parse_errors)
     tg = tg_ad.extract_tree(cfg.target.root, "target", cfg.target.repo,
-                            cfg.target.version, cfg.target.exclude)
+                            cfg.target.version, cfg.target.exclude, allow_parse_errors)
     db.replace_symbols("upstream", cfg.upstream.version, up)
     db.replace_symbols("target", cfg.target.version, tg)
-    return {"upstream_symbols": len(up), "target_symbols": len(tg)}
+    db.replace_parse_errors("upstream", cfg.upstream.version, up_ad.parse_errors)
+    db.replace_parse_errors("target", cfg.target.version, tg_ad.parse_errors)
+    return {"upstream_symbols": len(up), "target_symbols": len(tg),
+            "parse_errors": len(up_ad.parse_errors) + len(tg_ad.parse_errors)}
 
 
-def _norm(name: str) -> set[str]:
-    """Candidate normalized forms for cross-language name matching."""
+def _snake(s: str) -> str:
+    return re.sub(r"(?<!^)(?=[A-Z])", "_", s.strip("_")).lower()
+
+
+def _forms(name: str) -> tuple[set[str], set[str]]:
+    """Return (strong, weak) normalized name forms for cross-language matching.
+
+    strong = fully-qualified identity (a free symbol's own name, or a method's
+             owner-qualified name like 'am_ip_init_hw'). A strong<->strong match
+             is unambiguous.
+    weak   = a method's bare leaf name ('init_hw'). Bare-name matches are the
+             source of cross-class collisions (every class's `init_hw`), so they
+             are scored low and only used when unambiguous.
+    """
     leaf = name.rsplit(".", 1)[-1]
-    base = leaf.strip("_")
-    snake = re.sub(r"(?<!^)(?=[A-Z])", "_", base).lower()
-    forms = {leaf.lower(), base.lower(), snake}
-    # method Foo.bar -> foo_bar / bar  (target often flattens with a type prefix)
-    if "." in name:
+    strong = {leaf.lower(), leaf.strip("_").lower(), _snake(leaf)}
+    weak: set[str] = set()
+    if "." in name:                       # a method: owner-qualified is strong
         owner, m = name.rsplit(".", 1)
-        owner_s = re.sub(r"(?<!^)(?=[A-Z])", "_", owner).lower()
-        forms |= {f"{owner_s}_{m.strip('_').lower()}", m.strip("_").lower()}
-    return {f for f in forms if f}
+        strong.add(f"{_snake(owner)}_{_snake(m)}")
+        weak |= {m.strip("_").lower(), _snake(m)}   # bare leaf is weak
+        strong -= weak                    # the bare leaf is NOT a strong form
+    return {f for f in strong if f}, {f for f in weak if f}
+
+
+def _match_score(u_qual: str, t_qual: str) -> int:
+    """0 = no match, 3 = strong/strong (unambiguous), 1 = bare-name only."""
+    us, uw = _forms(u_qual)
+    ts, tw = _forms(t_qual)
+    if us & ts:
+        return 3
+    if (us & tw) or (uw & ts) or (uw & tw):
+        return 1
+    return 0
 
 
 def _stem(path: str) -> str:
@@ -107,49 +132,73 @@ def auto_map(cfg: Config, db: DB) -> dict:
         if up_path:
             file_corr[tgt_path] = up_path
 
-    # invert: upstream path -> list of target symbols in the corresponding file
+    # invert: upstream path -> target symbols in the corresponding file; and the
+    # reverse path map so declared provenance is O(1), not an O(n) scan per symbol.
     tgt_by_uppath: dict[str, list] = {}
     for t in tg_syms:
         up_path = file_corr.get(t["path"])
         if up_path:
             tgt_by_uppath.setdefault(up_path, []).append(t)
     up_file_to_tgt_file = {v: tg_files[k]["sid"] for k, v in file_corr.items() if k in tg_files}
+    uppath_to_tgtpath = {v: k for k, v in file_corr.items()}
 
-    # --- 2. write mappings -----------------------------------------------------
-    linked = proposed = 0
+    # --- 2. score every candidate edge, then assign with TARGET UNIQUENESS -----
+    # links[u_sid] = (target_sid, score); a target is awarded to its single best
+    # upstream claimant. Ties at the top score => ambiguous (linked to nobody).
+    best_for_target: dict[str, tuple[int, str]] = {}     # t_sid -> (score, u_sid)
+    tie_for_target: dict[str, bool] = {}
+    cand_for_upstream: dict[str, list[tuple[int, str]]] = {}
+    code_kinds = ("file", "test", "module", "parse_error")
+    for u in up_syms:
+        if u["kind"] in code_kinds:
+            continue
+        for t in tgt_by_uppath.get(u["path"], []):
+            if t["kind"] in code_kinds:
+                continue
+            sc = _match_score(u["qualname"], t["qualname"])
+            if not sc:
+                continue
+            cand_for_upstream.setdefault(u["sid"], []).append((sc, t["sid"]))
+            cur = best_for_target.get(t["sid"])
+            if cur is None or sc > cur[0]:
+                best_for_target[t["sid"]] = (sc, u["sid"]); tie_for_target[t["sid"]] = False
+            elif sc == cur[0] and u["sid"] != cur[1]:
+                tie_for_target[t["sid"]] = True
+
+    # --- 3. write mappings -----------------------------------------------------
+    linked = ambiguous = 0
     for u in up_syms:
         existing = db.mapping(u["sid"])
         if existing and existing["confidence"] in ("manual", "review"):
             continue  # never clobber a human decision
 
-        target_sid = None
+        target_sid, status, confidence, note = None, Status.NOT_STARTED.value, "auto", ""
         if u["kind"] in ("file", "test", "module"):
             target_sid = up_file_to_tgt_file.get(u["path"])
+            if target_sid:
+                status = Status.IMPLEMENTED.value
         else:
-            wanted = _norm(u["qualname"])
-            for t in tgt_by_uppath.get(u["path"], []):
-                if t["kind"] in ("file", "test", "module"):
-                    continue
-                if _norm(t["qualname"]) & wanted:
-                    target_sid = t["sid"]; break
+            # pick this upstream's best target where it is the UNIQUE top claimant
+            cands = sorted(cand_for_upstream.get(u["sid"], []), reverse=True)
+            won = next((t for sc, t in cands
+                        if best_for_target.get(t, (0, ""))[1] == u["sid"]
+                        and not tie_for_target.get(t, False)), None)
+            if won:
+                target_sid, status = won, Status.IMPLEMENTED.value
+            elif cands:                  # had candidates but none uniquely ours
+                confidence, note = "ambiguous", "name-collision; needs manual disambiguation"
 
-        status = Status.IMPLEMENTED.value if target_sid else Status.NOT_STARTED.value
-        if target_sid:
-            proposed += 1; linked += 1
+        dec_tgt = uppath_to_tgtpath.get(u["path"], "")
         m = Mapping(upstream_sid=u["sid"], target_sid=target_sid, status=status,
-                    declared_upstream_path=(declared.get(_inv(file_corr, u["path"]), prov.Provenance("")).upstream_path
-                                            if u["path"] in file_corr.values() else ""),
-                    confidence="auto",
+                    declared_upstream_path=declared.get(dec_tgt, prov.Provenance("")).upstream_path,
+                    confidence=confidence, note=note,
                     updated_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
         if existing and existing["owner"]:
             m.owner = existing["owner"]
         db.upsert_mapping(m)
-    return {"linked": linked, "proposed": proposed,
+        if target_sid:
+            linked += 1
+        elif confidence == "ambiguous":
+            ambiguous += 1
+    return {"linked": linked, "ambiguous": ambiguous,
             "file_pairs": len(file_corr), "header_confirmed": header_confirmed}
-
-
-def _inv(d: dict, value: str) -> str:
-    for k, v in d.items():
-        if v == value:
-            return k
-    return ""
