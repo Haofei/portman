@@ -11,10 +11,10 @@ import re
 from ..model import Symbol, SymbolKind
 from .base import Adapter, h
 
-FN = re.compile(r"^\s*(?:pub\s+)?fn\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(([^)]*)\)([^\{\n]*)",
+FN = re.compile(r"^\s*(?:pub\s+)?fn\s+([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)\s*\(([^)]*)\)([^\{\n]*)",
                 re.MULTILINE)
 STRUCT = re.compile(r"^\s*(?:pub\s+)?struct\s+([A-Za-z_][A-Za-z0-9_]*)", re.MULTILINE)
-ENUM = re.compile(r"^\s*(?:pub\s+)?enum\s+([A-Za-z_][A-Za-z0-9_]*)", re.MULTILINE)
+ENUM = re.compile(r"^\s*(?:pub\s+)?(?:enum|sum)\s+([A-Za-z_][A-Za-z0-9_]*)", re.MULTILINE)
 CONST = re.compile(r"^\s*(?:pub\s+)?(?:const|let)\s+([A-Z][A-Z0-9_]*)\b", re.MULTILINE)
 
 
@@ -35,8 +35,9 @@ class RssAdapter(Adapter):
         for m in FN.finditer(src):
             name, args, ret = m.group(1), m.group(2), m.group(3)
             sig = f"({args.strip()}){ret.strip()}"
+            kind = SymbolKind.METHOD.value if "." in name else SymbolKind.FUNCTION.value
             out.append(Symbol(side=side, repo=repo, path=rel, qualname=name,
-                              kind=SymbolKind.FUNCTION.value, signature=sig,
+                              kind=kind, signature=sig,
                               lineno=_lineno(src, m.start()), version=version,
                               sig_hash=h(re.sub(r"\s+", "", sig))))
         for rx, kind in ((STRUCT, SymbolKind.TYPE), (ENUM, SymbolKind.TYPE),

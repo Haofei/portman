@@ -46,6 +46,11 @@ def _snake(s: str) -> str:
     return re.sub(r"(?<!^)(?=[A-Z])", "_", s.strip("_")).lower()
 
 
+TARGET_TYPE_ALIASES = {
+    "TGBuffer": {"Buffer"},
+}
+
+
 def _forms(name: str) -> tuple[set[str], set[str]]:
     """Return (strong, weak) normalized name forms for cross-language matching.
 
@@ -67,15 +72,70 @@ def _forms(name: str) -> tuple[set[str], set[str]]:
     return {f for f in strong if f}, {f for f in weak if f}
 
 
-def _match_score(u_qual: str, t_qual: str) -> int:
+def _rss_first_arg_type(signature: str) -> str:
+    """Best-effort owner inference for flat RSS helper methods.
+
+    The target port often represents a Python method as a free function whose
+    first parameter is the receiver, for example `vec(d: read DType, sz: Int)`.
+    Treat that as having an additional strong form `DType.vec` while preserving
+    the actual target qualname for traceability.
+    """
+    inner = signature.strip()
+    if not inner.startswith("("):
+        return ""
+    inner = inner[1:].split(")", 1)[0].strip()
+    if not inner:
+        return ""
+    first_param = inner.split(",", 1)[0]
+    if ":" not in first_param:
+        return ""
+    first = first_param.split(":", 1)[1].strip()
+    first = re.sub(r"^(read|mut|fresh)\s+", "", first)
+    first = first.split("<", 1)[0].strip()
+    return first if re.match(r"^[A-Z][A-Za-z0-9_]*$", first) else ""
+
+
+def _symbol_forms(sym) -> tuple[set[str], set[str]]:
+    strong, weak = _forms(sym["qualname"])
+    for alias in TARGET_TYPE_ALIASES.get(sym["qualname"], set()):
+        alias_strong, alias_weak = _forms(alias)
+        strong |= alias_strong
+        weak |= alias_weak
+    if sym["kind"] == "function" and "." not in sym["qualname"]:
+        owner = _rss_first_arg_type(sym["signature"] or "")
+        if owner:
+            leaf = sym["qualname"].rsplit(".", 1)[-1]
+            strong.add(f"{_snake(owner)}_{_snake(leaf)}")
+            for alias in TARGET_TYPE_ALIASES.get(owner, set()):
+                strong.add(f"{_snake(alias)}_{_snake(leaf)}")
+    return strong, weak
+
+
+def _match_score(u, t) -> int:
     """0 = no match, 3 = strong/strong (unambiguous), 1 = bare-name only."""
-    us, uw = _forms(u_qual)
-    ts, tw = _forms(t_qual)
+    if not _kind_compatible(u["kind"], t["kind"]):
+        return 0
+    us, uw = _symbol_forms(u)
+    ts, tw = _symbol_forms(t)
     if us & ts:
         return 3
     if (us & tw) or (uw & ts) or (uw & tw):
         return 1
     return 0
+
+
+def _kind_compatible(upstream_kind: str, target_kind: str) -> bool:
+    if upstream_kind == "class":
+        return target_kind in ("class", "type")
+    if upstream_kind == "type":
+        return target_kind in ("type", "class")
+    if upstream_kind == "method":
+        return target_kind in ("method", "function")
+    if upstream_kind == "function":
+        return target_kind in ("function", "method")
+    if upstream_kind == "constant":
+        return target_kind == "constant"
+    return upstream_kind == target_kind
 
 
 def _stem(path: str) -> str:
@@ -155,7 +215,7 @@ def auto_map(cfg: Config, db: DB) -> dict:
         for t in tgt_by_uppath.get(u["path"], []):
             if t["kind"] in code_kinds:
                 continue
-            sc = _match_score(u["qualname"], t["qualname"])
+            sc = _match_score(u, t)
             if not sc:
                 continue
             cand_for_upstream.setdefault(u["sid"], []).append((sc, t["sid"]))
