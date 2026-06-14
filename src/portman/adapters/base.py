@@ -46,6 +46,12 @@ class Adapter(ABC):
         """Return all symbols in one file, including a FILE-kind symbol for the
         file itself."""
 
+    def arg_types(self, signature: str) -> list[tuple[str, str]]:
+        """Parse a signature into [(param_name, type)] — used by the matcher for
+        receiver inference. Default: none. Override in language adapters that want
+        it (see rss.py). Keeps signature syntax out of the generic core."""
+        return []
+
     def discover(self, root: Path) -> list[Path]:
         out: list[Path] = []
         for pat in self.patterns:

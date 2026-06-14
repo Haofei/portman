@@ -4,9 +4,13 @@ A language-agnostic framework + CLI for porting an upstream library into a targe
 project while maintaining a strict **1:1 mapping** between the two, proving
 behavioral equivalence, and tracking upstream releases over time.
 
-It is configured here for the reference port **`tinygrad` (Python) →
-`tinygrad-rsmc` (`rsscript`/`.rss`)**, but works for any source library and any
-target language via pluggable adapters.
+The core is language/framework-independent: the data model, storage, diff engine,
+coverage/gaps/batches, and reporting operate on an abstract symbol model and never
+mention a language. Languages enter only through **pluggable adapters** (symbol +
+signature extraction) and **opt-in `[mapping]` conventions** in config. The
+**`tinygrad` (Python) → `tinygrad-rsmc` (`rsscript`/`.rss`)** port in this repo is
+just the reference *example* that configures those pieces — see
+[docs/13-language-agnostic.md](docs/13-language-agnostic.md).
 
 > **It already runs against the real repos.** With zero hand-curation:
 >
@@ -194,12 +198,20 @@ Six phases from "inventory only" to "CI-gated behavioral equivalence". See
 
 ---
 
-## Extending to another target language
+## Extending to another language pair
 
-1. Write `src/portman/adapters/<lang>.py` subclassing `Adapter` (≈40 lines, see
-   `rss.py`) **or** add a `[adapters.<lang>]` regex block to `portman.toml`.
-2. Point `[target] adapter = "<lang>"`.
-3. Re-run `make inventory map report`. Nothing else changes — the model, DB,
-   diff, progress, and reporting are all language-agnostic.
+The engine is language-independent; a new pair touches only the three seams
+(adapters, `[mapping]` conventions, upstream extension). See
+[docs/13-language-agnostic.md](docs/13-language-agnostic.md).
+
+1. Point `[upstream]`/`[target]` at adapters — built-in (`python`, `rss`), a
+   `[adapters.<lang>]` regex block, or a JSON inventory (`[target] inventory=…`).
+2. If the target flattens methods onto a receiver param, give that adapter an
+   `arg_types()` parser (≈12 lines, see `rss.py`). Signature syntax lives in the
+   adapter, never the core.
+3. Set only the `[mapping]` conventions your pair uses (`inplace_suffix`,
+   `dunder_passthrough`, `type_aliases`, …) — all opt-in, generic defaults.
+4. Re-run `make inventory map report`. The model, DB, diff, progress, batches,
+   and reporting are unchanged.
 
 See `docs/` for the full design of each subsystem.

@@ -66,8 +66,16 @@ boost = ["uop/ops.py::UOp.const", "uop/ops.py::UOp.alu", "dtype.py::dtypes"]
 command = "RSSCRIPT_RUNTIME_PATH=/home/zoe/rsscript/crates/runtime /home/zoe/rsscript/target/release/rss run tinygrad-rss && python3 oracle/roundtrip.py"
 
 # Project-specific cross-language naming conventions for auto-mapping. All optional
-# and empty by default — the engine itself is library-agnostic; these encode how
-# tinygrad-rss specifically renames things.
+# and empty/off by default — the engine itself is library-agnostic; everything
+# below encodes how tinygrad (Python) -> tinygrad-rss (rsscript) specifically maps.
+[mapping]
+# A Python method `Tensor.to_` (trailing _, in-place) maps to `tensor_to_inplace`.
+inplace_suffix = "_inplace"
+# A method whose leaf the target preserves verbatim (Python dunders __hash__) wins
+# the exact name over a normalized tie.
+dunder_passthrough = true
+# owner_qualified defaults true: `Tensor.reshape` matches a flattened `tensor_reshape`.
+
 [mapping.type_aliases]
 # target struct/receiver name -> upstream type name(s) it implements
 TGBuffer = ["Buffer"]

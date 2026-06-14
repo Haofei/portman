@@ -25,9 +25,17 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 CANON = re.compile(r"@port\s+(\w+)\s*[:=]\s*(.+?)\s*$", re.MULTILINE)
-# Legacy / free-form: any mention of an upstream source path in the header,
-# e.g. "1:1 port of tinygrad/uop/ops.py", "Source-shaped slice of tinygrad/engine/jit.py".
-LEGACY = re.compile(r"\b((?:[A-Za-z0-9_]+/)*[A-Za-z0-9_]+\.py)\b")
+
+
+def _legacy_re(exts: tuple[str, ...]) -> re.Pattern:
+    """Legacy / free-form header: any mention of an upstream source path with one
+    of the upstream file extensions, e.g. "1:1 port of tinygrad/uop/ops.py". The
+    extension set comes from the upstream adapter, so this is language-agnostic."""
+    alt = "|".join(re.escape(e.lstrip(".")) for e in exts) or "py"
+    return re.compile(rf"\b((?:[A-Za-z0-9_]+/)*[A-Za-z0-9_]+\.(?:{alt}))\b")
+
+
+DEFAULT_EXTS = ("py",)
 
 
 @dataclass
@@ -45,7 +53,8 @@ class Provenance:
         return self.format != "none"
 
 
-def parse(text: str, target_path: str, header_lines: int = 40) -> Provenance:
+def parse(text: str, target_path: str, header_lines: int = 40,
+          upstream_exts: tuple[str, ...] = DEFAULT_EXTS) -> Provenance:
     head = "\n".join(text.splitlines()[:header_lines])
     fields = {k.lower(): v for k, v in CANON.findall(head)}
     if fields:
@@ -57,13 +66,13 @@ def parse(text: str, target_path: str, header_lines: int = 40) -> Provenance:
             status=fields.get("status", ""),
             deviation=fields.get("deviation", ""),
             format="canonical")
-    m = LEGACY.search(head)
+    m = _legacy_re(upstream_exts).search(head)
     if m:
         return Provenance(target_path=target_path, upstream_path=m.group(1),
                           format="legacy")
     return Provenance(target_path=target_path, format="none")
 
 
-def parse_file(path: Path, root: Path) -> Provenance:
+def parse_file(path: Path, root: Path, upstream_exts: tuple[str, ...] = DEFAULT_EXTS) -> Provenance:
     return parse(path.read_text(encoding="utf-8", errors="ignore"),
-                 path.relative_to(root).as_posix())
+                 path.relative_to(root).as_posix(), upstream_exts=upstream_exts)

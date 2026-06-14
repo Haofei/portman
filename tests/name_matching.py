@@ -33,6 +33,9 @@ repo = "tg"
 root = "tg/src"
 adapter = "rss"
 version = "working"
+[mapping]
+inplace_suffix = "_inplace"
+dunder_passthrough = true
 """
 
 UP_TENSOR = '''

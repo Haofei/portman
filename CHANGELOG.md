@@ -1,5 +1,25 @@
 # Changelog
 
+## Unreleased — language-agnostic core (tinygrad demoted to an example)
+
+The matcher previously hardcoded Python source conventions and rsscript signature
+syntax in the core. Now language enters only through three seams; tinygrad ↔
+rsscript is just the example config. Behavior for the reference port is unchanged
+(1695 links / 180 ambiguous / 0 duplicate targets).
+
+- **Signature syntax moved to adapters.** `Adapter.arg_types(signature)` (base
+  returns none); the `read|mut|fresh` parser now lives in the rss adapter. The
+  core no longer knows any signature syntax.
+- **Naming conventions are opt-in config.** `[mapping] owner_qualified`
+  (default on, universal), `dunder_passthrough` and `inplace_suffix` (default
+  off; the Python conventions). The reference `portman.toml` enables the latter
+  two; remove `[mapping]` for a conservative generic matcher.
+- **Provenance is extension-driven.** The legacy header regex uses the upstream
+  adapter's file extension(s) instead of a hardcoded `.py`.
+- `tests/agnostic.py` proves the conventions are off by default and on only when
+  configured, and that signature parsing is adapter-owned.
+- New `docs/13-language-agnostic.md`; README reframed.
+
 ## Unreleased — compiler-inventory ingestion (todo chunk E, #4)
 
 - **`[target] inventory = "inv.json"`** ingests a compiler-produced symbol

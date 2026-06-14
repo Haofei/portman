@@ -38,6 +38,13 @@ def target_adapter(cfg: Config):
     return _adapter(cfg, cfg.target.adapter)
 
 
+def _upstream_exts(cfg: Config) -> tuple[str, ...]:
+    """Upstream file extensions (from the upstream adapter's globs), so provenance
+    header parsing is not Python-specific. '*.py' -> ('py',)."""
+    pats = _adapter(cfg, cfg.upstream.adapter).patterns
+    return tuple(p.rsplit(".", 1)[-1] for p in pats) or ("py",)
+
+
 def build_inventory(cfg: Config, db: DB, allow_parse_errors: bool = True) -> dict:
     up_ad = _adapter(cfg, cfg.upstream.adapter)
     tg_ad = target_adapter(cfg)
@@ -62,19 +69,35 @@ def _raw_snake(s: str) -> str:
     return re.sub(r"(?<!^)(?=[A-Z])", "_", s).lower()
 
 
+def _no_args(signature: str) -> list[tuple[str, str]]:
+    return []
+
+
 @dataclass
 class MappingRules:
-    """Project-specific naming conventions for cross-language matching. Empty by
-    default so the engine is library-agnostic; values come from portman.toml
-    `[mapping]`. See docs/02 for the schema."""
-    # target type/struct name (or inferred receiver type) -> upstream type names
+    """Cross-language matching conventions. Everything is generic with safe
+    defaults; the Python/rsscript-specific behaviour is OPT-IN via portman.toml
+    `[mapping]` (so tinygrad is just an example, not baked into the core).
+
+    Universal (on by default):
+      owner_qualified  — a method `Owner.m` also matches a flattened `owner_m`.
+    Opt-in conventions:
+      dunder_passthrough — a method whose leaf the target preserves verbatim
+                           (e.g. Python dunders `__hash__`) matches that exact name.
+      inplace_suffix     — map a source in-place spelling `Owner.m_` to
+                           `owner_m<suffix>` (e.g. `_inplace`); "" disables.
+    Project data:
+      type_aliases / owner_prefix_aliases / receiver_methods (see docs/02).
+    Adapter-provided:
+      arg_types(signature) — the TARGET adapter's signature parser, used for
+                           receiver inference. Defaults to none (no parsing)."""
     type_aliases: dict[str, set[str]] = field(default_factory=dict)
-    # upstream owner class -> target qualname prefixes that flatten its methods
     owner_prefix_aliases: dict[str, list[str]] = field(default_factory=dict)
-    # interned-cache receiver type -> {owner, strip_prefix}: a flat target function
-    # whose first param is this type and second is (id, Int) is really a method of
-    # `owner`, after stripping `strip_prefix` from its name.
     receiver_methods: dict[str, dict] = field(default_factory=dict)
+    owner_qualified: bool = True
+    dunder_passthrough: bool = False
+    inplace_suffix: str = ""
+    arg_types: object = _no_args          # callable: signature -> [(name, type)]
 
     @classmethod
     def from_config(cls, cfg: Config) -> "MappingRules":
@@ -82,85 +105,64 @@ class MappingRules:
         return cls(
             type_aliases={k: set(v) for k, v in m.get("type_aliases", {}).items()},
             owner_prefix_aliases={k: list(v) for k, v in m.get("owner_prefix_aliases", {}).items()},
-            receiver_methods=dict(m.get("receiver_methods", {})))
+            receiver_methods=dict(m.get("receiver_methods", {})),
+            owner_qualified=bool(m.get("owner_qualified", True)),
+            dunder_passthrough=bool(m.get("dunder_passthrough", False)),
+            inplace_suffix=str(m.get("inplace_suffix", "")))
 
 
 NO_RULES = MappingRules()
 
 
-def _forms(name: str) -> tuple[set[str], set[str]]:
-    """Return (strong, weak) normalized name forms for cross-language matching.
+def build_rules(cfg: Config) -> "MappingRules":
+    """Config rules + the target adapter's signature parser (for receiver
+    inference). Use this everywhere matching happens."""
+    rules = MappingRules.from_config(cfg)
+    rules.arg_types = getattr(target_adapter(cfg), "arg_types", _no_args)
+    return rules
 
-    strong = fully-qualified identity (a free symbol's own name, or a method's
-             owner-qualified name like 'am_ip_init_hw'). A strong<->strong match
-             is unambiguous.
-    weak   = a method's bare leaf name ('init_hw'). Bare-name matches are the
-             source of cross-class collisions (every class's `init_hw`), so they
-             are scored low and only used when unambiguous.
-    """
+
+def _forms(name: str, rules: MappingRules = NO_RULES) -> tuple[set[str], set[str]]:
+    """Return (strong, weak) normalized name forms. Names are reduced to a
+    snake_case interlingua so any two languages compare in a common space.
+
+    strong = fully-qualified identity (a free symbol's own name, or, when
+             owner_qualified, a method's owner-joined name like 'am_ip_init_hw').
+    weak   = a method's bare leaf name ('init_hw'); bare matches are scored low
+             because every class's `init_hw` collides on it."""
     leaf = name.rsplit(".", 1)[-1]
     strong = {leaf.lower(), leaf.strip("_").lower(), _snake(leaf)}
     weak: set[str] = set()
-    if "." in name:                       # a method: owner-qualified is strong
+    if "." in name:                       # a method
         owner, m = name.rsplit(".", 1)
-        strong.add(f"{_snake(owner)}_{_snake(m)}")
-        strong.add(f"{_snake(owner)}_{_raw_snake(m)}")
-        if m.endswith("_") and not m.endswith("__"):
-            strong.add(f"{_snake(owner)}_{_snake(m[:-1])}_inplace")
+        if rules.owner_qualified:
+            strong.add(f"{_snake(owner)}_{_snake(m)}")
+            strong.add(f"{_snake(owner)}_{_raw_snake(m)}")
+            if rules.inplace_suffix and m.endswith("_") and not m.endswith("__"):
+                strong.add(f"{_snake(owner)}_{_snake(m[:-1])}{rules.inplace_suffix}")
         weak |= {m.strip("_").lower(), _snake(m)}   # bare leaf is weak
         strong -= weak                    # the bare leaf is NOT a strong form
     return {f for f in strong if f}, {f for f in weak if f}
 
 
-def _rss_first_arg_type(signature: str) -> str:
-    """Best-effort owner inference for flat RSS helper methods.
-
-    The target port often represents a Python method as a free function whose
-    first parameter is the receiver, for example `vec(d: read DType, sz: Int)`.
-    Treat that as having an additional strong form `DType.vec` while preserving
-    the actual target qualname for traceability.
-    """
-    inner = signature.strip()
-    if not inner.startswith("("):
-        return ""
-    inner = inner[1:].split(")", 1)[0].strip()
-    if not inner:
-        return ""
-    first_param = inner.split(",", 1)[0]
-    if ":" not in first_param:
-        return ""
-    first = first_param.split(":", 1)[1].strip()
-    first = re.sub(r"^(read|mut|fresh)\s+", "", first)
-    first = first.split("<", 1)[0].strip()
-    return first if re.match(r"^[A-Z][A-Za-z0-9_]*$", first) else ""
-
-
-def _rss_arg_types(signature: str) -> list[tuple[str, str]]:
-    inner = signature.strip()
-    if not inner.startswith("("):
-        return []
-    inner = inner[1:].split(")", 1)[0].strip()
-    if not inner:
-        return []
-    out: list[tuple[str, str]] = []
-    for param in inner.split(","):
-        if ":" not in param:
-            continue
-        name, ty = param.split(":", 1)
-        ty = re.sub(r"^(read|mut|fresh)\s+", "", ty.strip())
-        out.append((name.strip(), ty.split("<", 1)[0].strip()))
-    return out
+def _first_arg_owner(sym, rules: MappingRules) -> str:
+    """Receiver type of a flat target function, via the target adapter's signature
+    parser. e.g. `vec(d: DType, sz: Int)` -> 'DType'. Capitalized types only."""
+    args = rules.arg_types(sym["signature"] or "")
+    if args and re.match(r"^[A-Z][A-Za-z0-9_]*$", args[0][1] or ""):
+        return args[0][1]
+    return ""
 
 
 def _receiver_method_forms(sym, rules: MappingRules) -> set[str]:
     """Owner-qualified strong forms for a flat target function that is really a
-    method. A function is treated as a method of `owner` when EITHER its name
-    carries the configured `strip_prefix` (e.g. `uop_foo`) OR its first param is
-    the interned-cache receiver type and its second is the id (e.g.
-    `foo(c: UOpCache, id: Int, ...)`). Config-driven via [mapping].receiver_methods."""
+    method — when its name carries a configured `strip_prefix` OR its first param
+    is a configured interned-cache receiver type with the id as second param.
+    Config-driven via [mapping].receiver_methods; the signature parse is the
+    target adapter's."""
     if not rules.receiver_methods or sym["kind"] != "function":
         return set()
-    args = _rss_arg_types(sym["signature"] or "")
+    args = rules.arg_types(sym["signature"] or "")
     out: set[str] = set()
     for cache_type, spec in rules.receiver_methods.items():
         owner, sp = spec["owner"], spec.get("strip_prefix", "")
@@ -176,22 +178,19 @@ def _receiver_method_forms(sym, rules: MappingRules) -> set[str]:
 
 def _symbol_forms(sym, rules: MappingRules = NO_RULES,
                   side: str = "target") -> tuple[set[str], set[str]]:
-    strong, weak = _forms(sym["qualname"])
-    # type aliases apply on either side (keyed by the specific name).
+    strong, weak = _forms(sym["qualname"], rules)
     for alias in rules.type_aliases.get(sym["qualname"], set()):
-        alias_strong, alias_weak = _forms(alias)
-        strong |= alias_strong
-        weak |= alias_weak
+        a_s, a_w = _forms(alias, rules)
+        strong |= a_s; weak |= a_w
     for owner, prefixes in rules.owner_prefix_aliases.items():
         for prefix in prefixes:
             if sym["qualname"].startswith(f"{prefix}_"):
                 leaf = sym["qualname"][len(prefix) + 1:]
                 strong.add(f"{_snake(owner)}_{_snake(leaf)}")
-    # First-arg receiver inference is a TARGET-side convention (the port flattens
-    # a method into a free function whose first param is the receiver). Applying
-    # it to upstream would mint phantom owner forms from Python type annotations.
+    # Receiver inference is a TARGET-side convention (flattened method whose first
+    # param is the receiver). Applying it upstream would mint phantom owner forms.
     if side == "target" and sym["kind"] == "function" and "." not in sym["qualname"]:
-        owner = _rss_first_arg_type(sym["signature"] or "")
+        owner = _first_arg_owner(sym, rules)
         if owner:
             leaf = sym["qualname"].rsplit(".", 1)[-1]
             strong.add(f"{_snake(owner)}_{_snake(leaf)}")
@@ -207,15 +206,14 @@ def _match_score(u, t, rules: MappingRules = NO_RULES) -> int:
         return 0
     if u["kind"] == "method" and t["kind"] in ("method", "function"):
         owner, leaf = u["qualname"].rsplit(".", 1)
-        owner_leaf = f"{_snake(owner)}_{_raw_snake(leaf)}"
-        # raw method spelling preserved verbatim by the target (e.g. dunders
-        # `__hash__`, `__eq__`): the exact name beats any normalized tie. This
-        # stops `Tensor.hash` and `Tensor.__hash__` from contending for it.
-        if t["qualname"] == leaf:
+        # target preserves the raw method spelling verbatim (e.g. dunders) — exact
+        # name beats any normalized tie. Opt-in (Python convention).
+        if rules.dunder_passthrough and t["qualname"] == leaf:
             return 4
-        if t["qualname"] == owner_leaf:
+        if rules.owner_qualified and t["qualname"] == f"{_snake(owner)}_{_raw_snake(leaf)}":
             return 4
-        if leaf.endswith("_") and not leaf.endswith("__") and t["qualname"] == f"{_snake(owner)}_{_snake(leaf[:-1])}_inplace":
+        if (rules.inplace_suffix and leaf.endswith("_") and not leaf.endswith("__")
+                and t["qualname"] == f"{_snake(owner)}_{_snake(leaf[:-1])}{rules.inplace_suffix}"):
             return 4
     us, uw = _symbol_forms(u, rules, "upstream")
     ts, tw = _symbol_forms(t, rules, "target")
@@ -277,10 +275,11 @@ def file_correspondence(cfg: Config, db: DB) -> dict:
     # provenance headers come from source files; a JSON inventory carries none, so
     # correspondence then relies on path-stem mirroring.
     tgt_ad = target_adapter(cfg)
+    exts = _upstream_exts(cfg)
     declared: dict[str, prov.Provenance] = {}
     if getattr(tgt_ad, "name", "") != "inventory":
         for f in tgt_ad.discover(cfg.target.root):
-            p = prov.parse_file(f, cfg.target.root)
+            p = prov.parse_file(f, cfg.target.root, exts)
             if p.declared:
                 declared[p.target_path] = p
 
@@ -368,7 +367,7 @@ def apply_symbol_links(cfg: Config, db: DB, up_syms, tg_syms) -> dict:
 
 
 def auto_map(cfg: Config, db: DB) -> dict:
-    rules = MappingRules.from_config(cfg)
+    rules = build_rules(cfg)
     fc = file_correspondence(cfg, db)
     up_syms, tg_syms = fc["up_syms"], fc["tg_syms"]
     forced = apply_symbol_links(cfg, db, up_syms, tg_syms)

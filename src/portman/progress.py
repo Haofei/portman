@@ -150,7 +150,7 @@ def gaps(db: DB, up_version: str, limit: int | None = None, cfg=None,
         from . import inventory
         fc = inventory.file_correspondence(cfg, db)
         tgt_by_uppath = fc["tgt_by_uppath"]
-        rules = inventory.MappingRules.from_config(cfg)
+        rules = inventory.build_rules(cfg)
         up_by_sid = {s["sid"]: s for s in fc["up_syms"]}
         for m in db.mappings():
             if m["target_sid"]:

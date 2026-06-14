@@ -18,6 +18,9 @@ ENUM = re.compile(r"^\s*(?:pub\s+)?(?:enum|sum)\s+([A-Za-z_][A-Za-z0-9_]*)", re.
 CONST = re.compile(r"^\s*(?:pub\s+)?(?:const|let)\s+([A-Z][A-Z0-9_]*)\b", re.MULTILINE)
 
 
+_QUAL = re.compile(r"^(read|mut|fresh)\s+")
+
+
 def _lineno(src: str, pos: int) -> int:
     return src.count("\n", 0, pos) + 1
 
@@ -25,6 +28,23 @@ def _lineno(src: str, pos: int) -> int:
 class RssAdapter(Adapter):
     name = "rss"
     patterns = ("*.rss",)
+
+    def arg_types(self, signature: str) -> list[tuple[str, str]]:
+        """Parse an rsscript signature `(name: read Type, ...)` into [(name, type)],
+        stripping ownership qualifiers and generics. The matcher uses this for
+        receiver inference; this adapter is the ONLY place that knows rss syntax."""
+        inner = signature.strip()
+        if not inner.startswith("("):
+            return []
+        inner = inner[1:].split(")", 1)[0].strip()
+        out: list[tuple[str, str]] = []
+        for param in inner.split(","):
+            if ":" not in param:
+                continue
+            nm, ty = param.split(":", 1)
+            ty = _QUAL.sub("", ty.strip()).split("<", 1)[0].strip()
+            out.append((nm.strip(), ty))
+        return out
 
     def extract_file(self, root, file, side, repo, version):
         rel = file.relative_to(root).as_posix()

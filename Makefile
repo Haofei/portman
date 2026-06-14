@@ -44,7 +44,7 @@ test:
 		$(PY) -m pytest -q tests; \
 	else \
 		echo "pytest not installed — running dependency-free test runners"; \
-		$(PY) tests/smoke.py && $(PY) tests/name_matching.py && $(PY) tests/classification.py && $(PY) tests/inventory_ingest.py; \
+		$(PY) tests/smoke.py && $(PY) tests/name_matching.py && $(PY) tests/classification.py && $(PY) tests/inventory_ingest.py && $(PY) tests/agnostic.py; \
 	fi
 
 pytest:

@@ -176,9 +176,10 @@ def cmd_provenance(args):
     cfg = _cfg(args)
     from .adapters import get_adapter
     ad = get_adapter(cfg.target.adapter, cfg.generic_adapters.get(cfg.target.adapter))
+    exts = inventory._upstream_exts(cfg)
     miss, legacy, canon = [], [], 0
     for f in ad.discover(cfg.target.root):
-        p = prov.parse_file(f, cfg.target.root)
+        p = prov.parse_file(f, cfg.target.root, exts)
         if p.format == "none":
             miss.append(p.target_path)
         elif p.format == "legacy":
