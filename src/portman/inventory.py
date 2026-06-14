@@ -50,6 +50,11 @@ TARGET_TYPE_ALIASES = {
     "TGBuffer": {"Buffer"},
 }
 
+TARGET_OWNER_PREFIX_ALIASES = {
+    "DTypeMixin": {"mixin_dtype"},
+    "UPat": {"upat"},
+}
+
 
 def _forms(name: str) -> tuple[set[str], set[str]]:
     """Return (strong, weak) normalized name forms for cross-language matching.
@@ -95,12 +100,44 @@ def _rss_first_arg_type(signature: str) -> str:
     return first if re.match(r"^[A-Z][A-Za-z0-9_]*$", first) else ""
 
 
+def _rss_arg_types(signature: str) -> list[tuple[str, str]]:
+    inner = signature.strip()
+    if not inner.startswith("("):
+        return []
+    inner = inner[1:].split(")", 1)[0].strip()
+    if not inner:
+        return []
+    out: list[tuple[str, str]] = []
+    for param in inner.split(","):
+        if ":" not in param:
+            continue
+        name, ty = param.split(":", 1)
+        ty = re.sub(r"^(read|mut|fresh)\s+", "", ty.strip())
+        out.append((name.strip(), ty.split("<", 1)[0].strip()))
+    return out
+
+
+def _looks_like_uop_method(sym) -> bool:
+    if sym["kind"] != "function" or not sym["path"].startswith("uop/"):
+        return False
+    name = sym["qualname"]
+    if name.startswith("uop_"):
+        return True
+    args = _rss_arg_types(sym["signature"] or "")
+    return len(args) >= 2 and args[0][1] == "UOpCache" and args[1] == ("id", "Int")
+
+
 def _symbol_forms(sym) -> tuple[set[str], set[str]]:
     strong, weak = _forms(sym["qualname"])
     for alias in TARGET_TYPE_ALIASES.get(sym["qualname"], set()):
         alias_strong, alias_weak = _forms(alias)
         strong |= alias_strong
         weak |= alias_weak
+    for owner, prefixes in TARGET_OWNER_PREFIX_ALIASES.items():
+        for prefix in prefixes:
+            if sym["qualname"].startswith(f"{prefix}_"):
+                leaf = sym["qualname"][len(prefix) + 1:]
+                strong.add(f"{_snake(owner)}_{_snake(leaf)}")
     if sym["kind"] == "function" and "." not in sym["qualname"]:
         owner = _rss_first_arg_type(sym["signature"] or "")
         if owner:
@@ -108,6 +145,11 @@ def _symbol_forms(sym) -> tuple[set[str], set[str]]:
             strong.add(f"{_snake(owner)}_{_snake(leaf)}")
             for alias in TARGET_TYPE_ALIASES.get(owner, set()):
                 strong.add(f"{_snake(alias)}_{_snake(leaf)}")
+        if _looks_like_uop_method(sym):
+            leaf = sym["qualname"]
+            if leaf.startswith("uop_"):
+                leaf = leaf[4:]
+            strong.add(f"u_op_{_snake(leaf)}")
     return strong, weak
 
 
