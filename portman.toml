@@ -96,9 +96,15 @@ strip_prefix = "uop_"
 # These are re-derived from config each `map` (confidence=config, not committed
 # to curated.jsonl). For one-off decisions use `portman link UP TARGET`.
 [mapping.symbol_links]
-# "helpers.py::count" = "helpers.rss::helpers_count"
-# "helpers.py::T" = "helpers.rss::helpers_T"
-# "tensor.py::T" = "tensor.rss::tensor_T_typevar"
+"device.py::Device" = "device.rss::Device"
+"helpers.py::CACHEDB" = "helpers.rss::CACHEDB"
+"helpers.py::cache_dir" = "helpers.rss::helpers_cache_dir"
+"helpers.py::count" = "helpers.rss::helpers_count"
+"helpers.py::cpu_events" = "helpers.rss::helpers_cpu_events"
+"helpers.py::T" = "helpers.rss::helpers_T"
+"helpers.py::U" = "helpers.rss::helpers_U"
+"tensor.py::P" = "tensor.rss::tensor_P_typevar"
+"tensor.py::T" = "tensor.rss::tensor_T_typevar"
 
 # Example of adding a brand-new target language with zero code, via the generic
 # regex adapter. Reference only — not used by the tinygrad port above.
