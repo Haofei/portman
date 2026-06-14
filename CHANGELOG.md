@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased — extract the matcher; fix forced-link target collisions
+
+- **Refactor: `matching.py`.** The cross-language matcher (`MappingRules`, name
+  normalization, `match_score`, `best_target_candidate`, kind compatibility) moved
+  out of `inventory.py` into a dedicated, dependency-light module — the
+  language-agnostic engine is now its own unit. `inventory.py` keeps orchestration
+  (adapters, `build_inventory`, `file_correspondence`, `auto_map`, symbol links).
+  The lazy import-cycle workarounds in `progress.py` are gone (top-level imports).
+  Matcher logic is byte-identical; reference numbers unchanged.
+- **Fix: forced/human links now claim their target.** A `[mapping.symbol_links]`
+  or `portman link`/manual mapping marks its target as taken, so the auto-mapper
+  no longer double-assigns it to another upstream symbol (e.g. a forced
+  `Device -> device.rss::Device` colliding with auto-mapped `_Device`). Aliases
+  are excepted — they intentionally share their primary's target. Regression test
+  added; previously this produced a duplicate-target 1:1 violation.
+
 ## Unreleased — language-agnostic core (tinygrad demoted to an example)
 
 The matcher previously hardcoded Python source conventions and rsscript signature

@@ -11,7 +11,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from portman.inventory import MappingRules, _match_score, _forms
+from portman.matching import MappingRules, match_score
 from portman.adapters.base import Adapter
 from portman.adapters.rss import RssAdapter
 from portman.adapters.python_ast import PythonAdapter
@@ -33,21 +33,21 @@ def main() -> int:
     t_dunder = sym("t.rss", "__hash__", "function")
 
     # generic: language tricks OFF -> no in-place / dunder exact match
-    if _match_score(u_inplace, t_inplace, generic) == 4:
+    if match_score(u_inplace, t_inplace, generic) == 4:
         f.append("generic rules wrongly applied in-place convention")
-    if _match_score(u_dunder, t_dunder, generic) == 4:
+    if match_score(u_dunder, t_dunder, generic) == 4:
         f.append("generic rules wrongly applied dunder passthrough")
 
     # opt-in: with the Python/rss flags, both match exactly
-    if _match_score(u_inplace, t_inplace, py_rss) != 4:
+    if match_score(u_inplace, t_inplace, py_rss) != 4:
         f.append("in-place convention not applied when configured")
-    if _match_score(u_dunder, t_dunder, py_rss) != 4:
+    if match_score(u_dunder, t_dunder, py_rss) != 4:
         f.append("dunder passthrough not applied when configured")
 
     # universal behaviour holds regardless: a method matches a flattened owner_name
     u_m = sym("t.py", "Tensor.reshape", "method")
     t_m = sym("t.rss", "tensor_reshape", "function")
-    if _match_score(u_m, t_m, generic) < 3:
+    if match_score(u_m, t_m, generic) < 3:
         f.append("owner-qualified (universal) match broken under generic rules")
 
     # signature parsing lives in adapters, not the core

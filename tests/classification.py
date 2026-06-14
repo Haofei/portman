@@ -41,7 +41,9 @@ boost = ["core/base.py::Base.key"]
 """
 
 UP_BASE = "class Base:\n    def key(self): ...\n    def other(self): ...\n"
-UP_UTIL = "def helper(): ...\ndef skip_me(): ...\ndef weird_name(): ...\n"
+# `lowered_weird` would auto-match the target the forced link claims for
+# `weird_name` — it must NOT, or we'd get a duplicate target.
+UP_UTIL = "def helper(): ...\ndef skip_me(): ...\ndef weird_name(): ...\ndef lowered_weird(): ...\n"
 UP_GEN = "def generated_thing(): ...\n"
 TG_BASE = "// @port upstream: up/core/base.py\nstruct Base {}\nfn base_key(b: read Base) {}\n"
 TG_UTIL = "// @port upstream: up/util.py\nfn lowered_weird() {}\n"
@@ -91,6 +93,13 @@ def main() -> int:
         wm = db.mapping(wsid)
         if not (wm and wm["confidence"] == "config" and wm["status"] == "implemented"):
             f.append(f"forced link mapping wrong: {dict(wm) if wm else None}")
+        # the forced link's target must NOT be double-claimed by the auto-mapper:
+        # lowered_weird (which auto-matches util.rss::lowered_weird) must not grab it.
+        lw = db.mapping(symbol_id("up", "util.py", "lowered_weird", "function"))
+        if lw and lw["target_sid"]:
+            f.append(f"lowered_weird stole the forced-link target: {dict(lw)}")
+        if db.duplicate_targets():
+            f.append(f"forced link produced a duplicate target: {db.duplicate_targets()[0]['target_sid']}")
         # dep boost: Base.key ranked above Base.other
         ranks = {g["qualname"]: g["risk"] for g in gp}
         # Base.key is implemented (base_key) so may not be a gap; check 'other' exists as gap

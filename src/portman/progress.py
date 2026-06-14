@@ -11,6 +11,7 @@ from collections import defaultdict, Counter
 
 from .db import DB
 from .model import Status, WEIGHT
+from . import inventory, matching
 from . import classify
 
 _BLOCKER = {
@@ -147,7 +148,6 @@ def gaps(db: DB, up_version: str, limit: int | None = None, cfg=None,
 
     tgt_by_uppath, rules, target_owner = {}, None, {}
     if explain and cfg:
-        from . import inventory
         fc = inventory.file_correspondence(cfg, db)
         tgt_by_uppath = fc["tgt_by_uppath"]
         rules = inventory.build_rules(cfg)
@@ -172,7 +172,7 @@ def gaps(db: DB, up_version: str, limit: int | None = None, cfg=None,
              "kind": s["kind"], "status": st, "public": bool(s["is_public"]),
              "risk": _risk(s, high, medium, dep_boost)}
         if cfg is not None:
-            tm = (inventory_best(s, tgt_by_uppath, rules, target_owner)
+            tm = (matching.best_target_candidate(s, tgt_by_uppath, rules, target_owner)
                   if (explain and rules is not None) else None)
             reason, detail = classify.gap_reason(s, st, m_by_sid.get(s["sid"]), tm, cfg)
             if reason in _SEGMENTED_REASONS:
@@ -187,20 +187,12 @@ def gaps(db: DB, up_version: str, limit: int | None = None, cfg=None,
     return out[:limit] if limit else out
 
 
-def inventory_best(s, tgt_by_uppath, rules, target_owner):
-    """Thin indirection to inventory.best_target_candidate (kept here to avoid a
-    top-level import cycle)."""
-    from . import inventory
-    return inventory.best_target_candidate(s, tgt_by_uppath, rules, target_owner)
-
-
 def batches(db: DB, up_version: str, cfg, limit: int | None = None,
             public_only: bool = False) -> list[dict]:
     """Group related gaps into coherent port batches (#3). Symbols are grouped by
     (upstream file, owner class) so you get 'UOp methods', 'UPat methods', etc.
     Each batch carries its suggested target file, blockers, coverage impact, and a
     verification command — i.e. it doubles as the machine-readable manifest (#9)."""
-    from . import inventory
     fc = inventory.file_correspondence(cfg, db)
     uppath_to_tgtpaths = fc["uppath_to_tgtpaths"]   # split ports: all target files
     cov = coverage(db, up_version, cfg)

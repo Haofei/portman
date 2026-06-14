@@ -31,7 +31,7 @@ class Config:
     # so the framework is library-agnostic.
     risk_high: tuple[str, ...] = ()
     risk_medium: tuple[str, ...] = ()
-    # project-specific cross-language naming conventions; see inventory.MappingRules
+    # project-specific cross-language naming conventions; see matching.MappingRules
     mapping: dict = field(default_factory=dict)
     # source-area name -> path prefixes, for coverage-by-area (#5)
     areas: dict = field(default_factory=dict)
