@@ -43,8 +43,8 @@ test:
 	@if $(PY) -c "import pytest" 2>/dev/null; then \
 		$(PY) -m pytest -q tests; \
 	else \
-		echo "pytest not installed — running dependency-free smoke test"; \
-		$(PY) tests/smoke.py; \
+		echo "pytest not installed — running dependency-free test runners"; \
+		$(PY) tests/smoke.py && $(PY) tests/name_matching.py; \
 	fi
 
 pytest:

@@ -46,6 +46,10 @@ def _snake(s: str) -> str:
     return re.sub(r"(?<!^)(?=[A-Z])", "_", s.strip("_")).lower()
 
 
+def _raw_snake(s: str) -> str:
+    return re.sub(r"(?<!^)(?=[A-Z])", "_", s).lower()
+
+
 TARGET_TYPE_ALIASES = {
     "TGBuffer": {"Buffer"},
 }
@@ -72,6 +76,9 @@ def _forms(name: str) -> tuple[set[str], set[str]]:
     if "." in name:                       # a method: owner-qualified is strong
         owner, m = name.rsplit(".", 1)
         strong.add(f"{_snake(owner)}_{_snake(m)}")
+        strong.add(f"{_snake(owner)}_{_raw_snake(m)}")
+        if m.endswith("_") and not m.endswith("__"):
+            strong.add(f"{_snake(owner)}_{_snake(m[:-1])}_inplace")
         weak |= {m.strip("_").lower(), _snake(m)}   # bare leaf is weak
         strong -= weak                    # the bare leaf is NOT a strong form
     return {f for f in strong if f}, {f for f in weak if f}
@@ -157,6 +164,18 @@ def _match_score(u, t) -> int:
     """0 = no match, 3 = strong/strong (unambiguous), 1 = bare-name only."""
     if not _kind_compatible(u["kind"], t["kind"]):
         return 0
+    if u["kind"] == "method" and t["kind"] in ("method", "function"):
+        owner, leaf = u["qualname"].rsplit(".", 1)
+        owner_leaf = f"{_snake(owner)}_{_raw_snake(leaf)}"
+        # raw method spelling preserved verbatim by the target (e.g. dunders
+        # `__hash__`, `__eq__`): the exact name beats any normalized tie. This
+        # stops `Tensor.hash` and `Tensor.__hash__` from contending for it.
+        if t["qualname"] == leaf:
+            return 4
+        if t["qualname"] == owner_leaf:
+            return 4
+        if leaf.endswith("_") and not leaf.endswith("__") and t["qualname"] == f"{_snake(owner)}_{_snake(leaf[:-1])}_inplace":
+            return 4
     us, uw = _symbol_forms(u)
     ts, tw = _symbol_forms(t)
     if us & ts:
