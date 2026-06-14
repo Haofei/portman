@@ -10,33 +10,10 @@ Run: PYTHONPATH=src python3 tests/name_matching.py
 """
 from __future__ import annotations
 
-import sys, tempfile, textwrap
-from pathlib import Path
+from harness import synthetic_port
+from portman import progress
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-
-from portman.config import Config
-from portman.db import DB
-from portman import inventory, progress
-
-CFG = """
-project = "nm"
-db = "port.db"
-reports = "reports"
-[upstream]
-repo = "up"
-root = "up"
-adapter = "python"
-version = "v1"
-[target]
-repo = "tg"
-root = "tg/src"
-adapter = "rss"
-version = "working"
-[mapping]
-inplace_suffix = "_inplace"
-dunder_passthrough = true
-"""
+CFG_EXTRA = '[mapping]\ninplace_suffix = "_inplace"\ndunder_passthrough = true\n'
 
 UP_TENSOR = '''
 class Tensor:
@@ -75,19 +52,8 @@ EXPECT = {
 
 
 def main() -> int:
-    with tempfile.TemporaryDirectory() as d:
-        root = Path(d)
-        (root / "up").mkdir()
-        (root / "tg/src").mkdir(parents=True)
-        (root / "up/tensor.py").write_text(textwrap.dedent(UP_TENSOR))
-        (root / "tg/src/tensor.rss").write_text(textwrap.dedent(TG_TENSOR))
-        (root / "portman.toml").write_text(CFG)
-
-        cfg = Config.load(root / "portman.toml")
-        db = DB(cfg.db_path)
-        inventory.build_inventory(cfg, db)
-        inventory.auto_map(cfg, db)
-
+    with synthetic_port({"tensor.py": UP_TENSOR}, {"tensor.rss": TG_TENSOR},
+                        cfg_extra=CFG_EXTRA) as (cfg, db):
         def target_of(qual: str):
             s = db.c.execute(
                 "SELECT sid FROM symbols WHERE side='upstream' AND version='v1' "

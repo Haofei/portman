@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from typing import Callable
 
 from .config import Config
 
@@ -54,7 +55,7 @@ class MappingRules:
     owner_qualified: bool = True
     dunder_passthrough: bool = False
     inplace_suffix: str = ""
-    arg_types: object = _no_args          # callable: signature -> [(name, type)]
+    arg_types: Callable[[str], list[tuple[str, str]]] = _no_args
 
     @classmethod
     def from_config(cls, cfg: Config) -> "MappingRules":

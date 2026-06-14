@@ -19,9 +19,15 @@ from __future__ import annotations
 import json
 import sqlite3
 import time
+from dataclasses import fields
 from pathlib import Path
 
 from .model import Symbol, Mapping, Deviation
+
+#: mappings table columns — the single source of truth is the Mapping dataclass,
+#: so adding a field flows into INSERT/UPSERT automatically (the CREATE TABLE and
+#: a migration still need the column, but the verbose SQL no longer duplicates it).
+_MAPPING_COLS = tuple(f.name for f in fields(Mapping))
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS symbols (
@@ -133,19 +139,12 @@ class DB:
     # ---- curated facts -------------------------------------------------------
     def upsert_mapping(self, m: Mapping):
         m.updated_at = m.updated_at or time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        cols = ",".join(_MAPPING_COLS)
+        placeholders = ",".join(f":{c}" for c in _MAPPING_COLS)
+        updates = ",".join(f"{c}=excluded.{c}" for c in _MAPPING_COLS if c != "upstream_sid")
         self.c.execute(
-            "INSERT INTO mappings VALUES "
-            "(:upstream_sid,:target_sid,:status,:verification,:owner,:reviewer,"
-            ":deviation_id,:note,:covers,:declared_upstream_path,"
-            ":declared_upstream_version,:confidence,:updated_at) "
-            "ON CONFLICT(upstream_sid) DO UPDATE SET "
-            "target_sid=excluded.target_sid,status=excluded.status,"
-            "verification=excluded.verification,owner=excluded.owner,"
-            "reviewer=excluded.reviewer,deviation_id=excluded.deviation_id,"
-            "note=excluded.note,covers=excluded.covers,"
-            "declared_upstream_path=excluded.declared_upstream_path,"
-            "declared_upstream_version=excluded.declared_upstream_version,"
-            "confidence=excluded.confidence,updated_at=excluded.updated_at",
+            f"INSERT INTO mappings ({cols}) VALUES ({placeholders}) "
+            f"ON CONFLICT(upstream_sid) DO UPDATE SET {updates}",
             m.to_row())
         self.c.commit()
 

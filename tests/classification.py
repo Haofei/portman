@@ -3,31 +3,10 @@ segmentation, and gap reasons. Run: PYTHONPATH=src python3 tests/classification.
 """
 from __future__ import annotations
 
-import sys, tempfile, textwrap
-from pathlib import Path
+from harness import synthetic_port
+from portman import classify, inventory, progress
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-
-from portman import classify
-from portman.config import Config
-from portman.db import DB
-from portman import inventory, progress
-
-CFG = """
-project = "cls"
-db = "port.db"
-reports = "reports"
-[upstream]
-repo = "up"
-root = "up"
-adapter = "python"
-version = "v1"
-[target]
-repo = "tg"
-root = "tg/src"
-adapter = "rss"
-version = "working"
-[areas]
+CFG_EXTRA = '''[areas]
 core = ["core/"]
 util = ["util.py"]
 [copied]
@@ -38,7 +17,7 @@ roots = ["gen/"]
 boost = ["core/base.py::Base.key"]
 [mapping.symbol_links]
 "util.py::weird_name" = "util.rss::lowered_weird"
-"""
+'''
 
 UP_BASE = "class Base:\n    def key(self): ...\n    def other(self): ...\n"
 # `lowered_weird` would auto-match the target the forced link claims for
@@ -51,19 +30,9 @@ TG_UTIL = "// @port upstream: up/util.py\nfn lowered_weird() {}\n"
 
 def main() -> int:
     f = []
-    with tempfile.TemporaryDirectory() as d:
-        root = Path(d)
-        (root / "up/core").mkdir(parents=True)
-        (root / "up/gen").mkdir(parents=True)
-        (root / "tg/src/core").mkdir(parents=True)
-        (root / "up/core/base.py").write_text(UP_BASE)
-        (root / "up/util.py").write_text(UP_UTIL)
-        (root / "up/gen/g.py").write_text(UP_GEN)
-        (root / "tg/src/core/base.rss").write_text(TG_BASE)
-        (root / "tg/src/util.rss").write_text(TG_UTIL)
-        (root / "portman.toml").write_text(CFG)
-        cfg = Config.load(root / "portman.toml")
-        db = DB(cfg.db_path)
+    up = {"core/base.py": UP_BASE, "util.py": UP_UTIL, "gen/g.py": UP_GEN}
+    tg = {"core/base.rss": TG_BASE, "util.rss": TG_UTIL}
+    with synthetic_port(up, tg, cfg_extra=CFG_EXTRA, run_inventory=False) as (cfg, db):
         inventory.build_inventory(cfg, db)
         res = inventory.auto_map(cfg, db)
         if res.get("forced_links") != 1:

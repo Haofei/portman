@@ -243,9 +243,10 @@ def batches(db: DB, up_version: str, cfg, limit: int | None = None,
 
 def unverified(db: DB, up_version: str) -> list[dict]:
     """Implemented but not yet behaviorally verified — the verification backlog."""
+    idx = db.mapping_index()
     out = []
     for s in db.symbols("upstream", up_version):
-        m = db.mapping(s["sid"])
+        m = idx.get(s["sid"])
         if m and m["status"] == Status.IMPLEMENTED.value:
             out.append({"path": s["path"], "qualname": s["qualname"] or "<file>",
                         "verification": m["verification"], "owner": m["owner"]})
@@ -253,9 +254,10 @@ def unverified(db: DB, up_version: str) -> list[dict]:
 
 
 def diverged(db: DB, up_version: str) -> list[dict]:
+    idx = db.mapping_index()
     out = []
     for s in db.symbols("upstream", up_version):
-        m = db.mapping(s["sid"])
+        m = idx.get(s["sid"])
         if m and m["status"] == Status.DIVERGED.value:
             out.append({"path": s["path"], "qualname": s["qualname"] or "<file>",
                         "deviation_id": m["deviation_id"], "note": m["note"]})
@@ -265,10 +267,12 @@ def diverged(db: DB, up_version: str) -> list[dict]:
 def aliases(db: DB, up_version: str) -> list[dict]:
     """Upstream symbols intentionally covered by another symbol's target
     (alias / private forwarder / public wrapper)."""
+    idx = db.mapping_index()
+    syms = db.symbols("upstream", up_version)
+    sym_by_sid = {s["sid"]: s for s in syms}
     out = []
-    sym_by_sid = {s["sid"]: s for s in db.symbols("upstream", up_version)}
-    for s in db.symbols("upstream", up_version):
-        m = db.mapping(s["sid"])
+    for s in syms:
+        m = idx.get(s["sid"])
         if m and m["status"] == Status.ALIASED.value:
             primary = sym_by_sid.get(m["covers"])
             out.append({"path": s["path"], "qualname": s["qualname"] or "<file>",
@@ -282,9 +286,10 @@ def ambiguous(db: DB, up_version: str) -> list[dict]:
     """Upstream symbols whose only target match was a name collision (e.g. several
     classes' `init_hw` onto one `fn init_hw`). Deliberately NOT counted as ported;
     a human must disambiguate or record a deviation."""
+    idx = db.mapping_index()
     out = []
     for s in db.symbols("upstream", up_version):
-        m = db.mapping(s["sid"])
+        m = idx.get(s["sid"])
         if m and m["confidence"] == "ambiguous":
             out.append({"path": s["path"], "qualname": s["qualname"] or "<file>",
                         "note": m["note"]})
