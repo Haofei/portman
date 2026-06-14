@@ -4,6 +4,14 @@ These items come from using Portman to track the tinygrad RSScript/modern-c port
 They are focused on reducing false gaps, improving batch selection, and making
 progress numbers more useful during an active port.
 
+> **Status (implemented):** 9 of 11 done; 2 partial. See `CHANGELOG.md`.
+> - ✅ #1 forced symbol links (`[mapping.symbol_links]` + `portman link`)
+> - ✅ #2 gap reasons · ✅ #3 `portman batches` · ✅ #5 coverage by area
+> - ✅ #6 `[copied]` roots · ✅ #7 `[ignore]` rules · ✅ #9 batch manifest
+> - ✅ #10 `status --fail-on-regression` · ✅ #11 `gaps --explain`
+> - 🟡 #4 inventory ingestion done in portman; **rsscript must emit the JSON**
+> - 🟡 #8 manual `[deps].boost` shipped; a real call/import graph is still TODO
+
 ## Immediate Improvements
 
 - [ ] **Configured symbol aliases.** Add explicit source-to-target symbol mapping
