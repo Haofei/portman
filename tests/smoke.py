@@ -83,6 +83,13 @@ def main() -> int:
         assert db.resolve_version("unknown-ref") == "unknown-ref"
         assert db.has_version("upstream", "v2") and not db.has_version("upstream", "nope")
 
+        # `set` must NOT expose `aliased` (it can't supply `covers`) — use `alias`.
+        from portman.cli import build_parser
+        import contextlib, io
+        with contextlib.suppress(SystemExit), contextlib.redirect_stderr(io.StringIO()):
+            build_parser().parse_args(["set", "aliased", "--upstream", "x::Y"])
+            raise AssertionError("`set aliased` should be rejected by argparse choices")
+
         print("SMOKE OK:", {"linked": res["linked"], "weighted": cov["weighted_pct"],
                             "sig_changes": rep["summary"]["signature_changed"]})
     return 0

@@ -13,6 +13,10 @@
 - **export bug fixed:** ambiguous auto-mappings (which carry an auto note) are no
   longer written to `curated.jsonl`; only human-owned facts (manual/review/owner/
   deviation) are exported.
+- **`set` no longer exposes `aliased`.** It cannot supply the required `covers`
+  target, so allowing it would let users create invalid aliased mappings. `set`'s
+  choices exclude it (with a guard for programmatic callers) and point to the
+  dedicated `portman alias A --of B`. Regression test added.
 
 ## Earlier — mapping-accuracy & version-resolution pass
 

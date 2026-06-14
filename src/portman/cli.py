@@ -180,6 +180,10 @@ def cmd_diff(args):
 
 
 def cmd_set(args):
+    if args.status == Status.ALIASED.value:   # guard programmatic callers; argparse blocks the CLI
+        print("error: use `portman alias A --of B` to create an aliased mapping "
+              "(it needs a `covers` target that `set` cannot supply).")
+        return 1
     cfg = _cfg(args); db = _db(cfg)
     path, _, qual = args.upstream.partition("::")
     sid = symbol_id(cfg.upstream.repo, path, qual, args.kind)
@@ -423,7 +427,11 @@ def build_parser():
     s = sub.add_parser("snapshot"); s.add_argument("--version", required=True); s.set_defaults(func=cmd_snapshot)
     s = sub.add_parser("diff"); s.add_argument("old"); s.add_argument("new")
     s.add_argument("--json", action="store_true"); s.set_defaults(func=cmd_diff)
-    s = sub.add_parser("set"); s.add_argument("status", choices=[x.value for x in Status])
+    # `aliased` is deliberately excluded: it requires a `covers` target, which set
+    # cannot supply. Use the dedicated `portman alias A --of B` command instead.
+    set_statuses = [x.value for x in Status if x is not Status.ALIASED]
+    s = sub.add_parser("set", help="set a mapping's status (use `alias` for aliased)")
+    s.add_argument("status", choices=set_statuses)
     s.add_argument("--upstream", required=True); s.add_argument("--kind", default="function")
     s.add_argument("--verification", default=""); s.add_argument("--owner", default="")
     s.add_argument("--deviation", default=""); s.add_argument("--note", default=""); s.set_defaults(func=cmd_set)
