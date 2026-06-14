@@ -294,6 +294,12 @@ def auto_map(cfg: Config, db: DB) -> dict:
     up_file_to_tgt_file = {v: tg_files[k]["sid"] for k, v in file_corr.items() if k in tg_files}
     uppath_to_tgtpath = {v: k for k, v in file_corr.items()}
 
+    # Human-owned mappings (manual/review/ambiguous-resolved/aliased) are locked:
+    # they neither compete for targets nor get clobbered, so an explicit alias
+    # (e.g. _data -> tensor_data) doesn't re-contend with its primary (data).
+    locked = {m["upstream_sid"] for m in db.mappings()
+              if m["confidence"] in ("manual", "review") or m["status"] == Status.ALIASED.value}
+
     # --- 2. score every candidate edge, then assign with TARGET UNIQUENESS -----
     # links[u_sid] = (target_sid, score); a target is awarded to its single best
     # upstream claimant. Ties at the top score => ambiguous (linked to nobody).
@@ -302,7 +308,7 @@ def auto_map(cfg: Config, db: DB) -> dict:
     cand_for_upstream: dict[str, list[tuple[int, str]]] = {}
     code_kinds = ("file", "test", "module", "parse_error")
     for u in up_syms:
-        if u["kind"] in code_kinds:
+        if u["kind"] in code_kinds or u["sid"] in locked:
             continue
         for t in tgt_by_uppath.get(u["path"], []):
             if t["kind"] in code_kinds:
@@ -320,9 +326,9 @@ def auto_map(cfg: Config, db: DB) -> dict:
     # --- 3. write mappings -----------------------------------------------------
     linked = ambiguous = 0
     for u in up_syms:
+        if u["sid"] in locked:
+            continue  # never clobber a human decision (manual/review/aliased)
         existing = db.mapping(u["sid"])
-        if existing and existing["confidence"] in ("manual", "review"):
-            continue  # never clobber a human decision
 
         target_sid, status, confidence, note = None, Status.NOT_STARTED.value, "auto", ""
         if u["kind"] in ("file", "test", "module"):

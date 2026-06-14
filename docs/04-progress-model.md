@@ -18,9 +18,19 @@ is never overstated.
 | `verified` | 1.00 | behavior proven equivalent (see verification axis) |
 | `diverged` | 1.00 | intentional, documented difference (needs `deviation_id`) |
 | `deprecated` | 1.00 | intentionally not ported |
+| `aliased` | 1.00 | covered by another symbol's target (needs `covers`) |
 
-`diverged`/`deprecated` score 1.0 because they are **decided** end-states — they
-are out of the "to-do" denominator, not silently missing.
+`diverged`/`deprecated`/`aliased` score 1.0 because they are **decided**
+end-states — out of the "to-do" denominator, not silently missing.
+
+**`aliased`** is the coverage dual of a deviation: when an upstream symbol is a
+private forwarder / public wrapper / re-export of another (e.g. `Tensor._data`
+shares the implementation of `Tensor.data`), `portman alias A --of B` records a
+mapping with `status=aliased` and `covers=<B's sid>` that points at B's target.
+Because it is a *secondary* coverer, it is **excluded from the target-uniqueness
+check** (only one primary may own a target) — so an alias can legally share a
+target without flagging a 1:1 violation. `doctor` verifies every alias names a
+primary that shares its target.
 
 ### Verification levels
 

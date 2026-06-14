@@ -38,10 +38,11 @@ class Status(str, enum.Enum):
     VERIFIED = "verified"
     DIVERGED = "diverged"
     DEPRECATED = "deprecated"
+    ALIASED = "aliased"        # covered by another symbol's target (alias/wrapper)
 
 
-# Numeric weight used for progress scoring. DIVERGED/DEPRECATED are intentional
-# end-states and are excluded from the "to-do" denominator by the progress model.
+# Numeric weight used for progress scoring. DIVERGED/DEPRECATED/ALIASED are
+# intentional end-states and are excluded from the "to-do" denominator.
 WEIGHT = {
     Status.NOT_STARTED: 0.0,
     Status.IN_PROGRESS: 0.25,
@@ -50,6 +51,7 @@ WEIGHT = {
     Status.VERIFIED: 1.0,
     Status.DIVERGED: 1.0,      # intentional + documented => counts as done
     Status.DEPRECATED: 1.0,    # intentionally not ported => counts as done
+    Status.ALIASED: 1.0,       # covered via an alias/wrapper => counts as done
 }
 
 
@@ -109,10 +111,13 @@ class Mapping:
     reviewer: str = ""
     deviation_id: Optional[str] = None
     note: str = ""
+    # when status == aliased: the *primary* upstream_sid whose target implementation
+    # also covers this symbol (an alias / private-forwarder / public wrapper).
+    covers: str = ""
     # provenance the target file declared about itself, for audit
     declared_upstream_path: str = ""
     declared_upstream_version: str = ""
-    confidence: str = "auto"       # "auto" | "manual" | "review"
+    confidence: str = "auto"       # "auto" | "manual" | "review" | "ambiguous"
     updated_at: str = ""
 
     def to_row(self) -> dict:

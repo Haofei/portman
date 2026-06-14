@@ -16,21 +16,27 @@
       "if": {"properties": {"status": {"enum": ["implemented", "verified"]}}},
       "then": {"required": ["target_sid"],
                "properties": {"target_sid": {"type": "string", "minLength": 1}}}
+    },
+    {
+      "if": {"properties": {"status": {"const": "aliased"}}},
+      "then": {"required": ["covers", "target_sid"],
+               "properties": {"covers": {"type": "string", "minLength": 1}}}
     }
   ],
   "properties": {
     "type": {"const": "mapping", "description": "discriminator in curated.jsonl"},
     "upstream_sid": {"type": "string", "description": "16-hex stable id of the upstream symbol (sha1 of repo::path::qualname::kind)."},
     "target_sid": {"type": ["string", "null"], "description": "Stable id of the linked target symbol, or null if unported."},
-    "status": {"enum": ["not_started", "in_progress", "partial", "implemented", "verified", "diverged", "deprecated"]},
+    "status": {"enum": ["not_started", "in_progress", "partial", "implemented", "verified", "diverged", "deprecated", "aliased"]},
     "verification": {"enum": ["none", "signature", "golden", "differential", "fuzz", "ported_tests"], "default": "none"},
     "owner": {"type": "string"},
     "reviewer": {"type": "string"},
     "deviation_id": {"type": ["string", "null"], "description": "FK into deviations[] when status=diverged."},
     "note": {"type": "string"},
+    "covers": {"type": "string", "description": "When status=aliased: the primary upstream_sid whose target implementation also covers this symbol (alias / wrapper / re-export)."},
     "declared_upstream_path": {"type": "string", "description": "Upstream path the target file's provenance header claims (for audit of drift)."},
     "declared_upstream_version": {"type": "string"},
-    "confidence": {"enum": ["auto", "manual", "review"], "default": "auto", "description": "auto links never override manual/review decisions."},
+    "confidence": {"enum": ["auto", "manual", "review", "ambiguous"], "default": "auto", "description": "auto links never override manual/review decisions."},
     "updated_at": {"type": "string", "format": "date-time"}
   }
 }

@@ -36,7 +36,7 @@ CREATE INDEX IF NOT EXISTS ix_sym_path ON symbols(side, path);
 CREATE TABLE IF NOT EXISTS mappings (
   upstream_sid TEXT PRIMARY KEY,
   target_sid TEXT, status TEXT, verification TEXT, owner TEXT, reviewer TEXT,
-  deviation_id TEXT, note TEXT, declared_upstream_path TEXT,
+  deviation_id TEXT, note TEXT, covers TEXT, declared_upstream_path TEXT,
   declared_upstream_version TEXT, confidence TEXT, updated_at TEXT
 );
 
@@ -68,6 +68,14 @@ class DB:
         self.c = sqlite3.connect(path)
         self.c.row_factory = sqlite3.Row
         self.c.executescript(SCHEMA)
+        self._migrate()
+
+    def _migrate(self):
+        # additive column migrations for DBs created before a column existed
+        cols = {r["name"] for r in self.c.execute("PRAGMA table_info(mappings)")}
+        if "covers" not in cols:
+            self.c.execute("ALTER TABLE mappings ADD COLUMN covers TEXT DEFAULT ''")
+            self.c.commit()
 
     # ---- inventory (derived) -------------------------------------------------
     def replace_symbols(self, side: str, version: str, syms: list[Symbol]):
@@ -107,10 +115,12 @@ class DB:
             (side, version)).fetchone() is not None
 
     def duplicate_targets(self) -> list[sqlite3.Row]:
-        """Target symbols claimed by more than one mapping — a 1:1 violation unless
-        intentional (then it needs a deviation)."""
+        """Target symbols claimed by more than one *primary* mapping — a 1:1
+        violation. Mappings with status='aliased' are intentional secondary
+        coverers (alias/wrapper) and are excluded."""
         return self.c.execute(
-            "SELECT target_sid, COUNT(*) n FROM mappings WHERE target_sid IS NOT NULL "
+            "SELECT target_sid, COUNT(*) n FROM mappings "
+            "WHERE target_sid IS NOT NULL AND status!='aliased' "
             "GROUP BY target_sid HAVING n>1 ORDER BY n DESC").fetchall()
 
     def symbols(self, side: str, version: str, kind: str | None = None) -> list[sqlite3.Row]:
@@ -126,13 +136,14 @@ class DB:
         self.c.execute(
             "INSERT INTO mappings VALUES "
             "(:upstream_sid,:target_sid,:status,:verification,:owner,:reviewer,"
-            ":deviation_id,:note,:declared_upstream_path,:declared_upstream_version,"
-            ":confidence,:updated_at) "
+            ":deviation_id,:note,:covers,:declared_upstream_path,"
+            ":declared_upstream_version,:confidence,:updated_at) "
             "ON CONFLICT(upstream_sid) DO UPDATE SET "
             "target_sid=excluded.target_sid,status=excluded.status,"
             "verification=excluded.verification,owner=excluded.owner,"
             "reviewer=excluded.reviewer,deviation_id=excluded.deviation_id,"
-            "note=excluded.note,declared_upstream_path=excluded.declared_upstream_path,"
+            "note=excluded.note,covers=excluded.covers,"
+            "declared_upstream_path=excluded.declared_upstream_path,"
             "declared_upstream_version=excluded.declared_upstream_version,"
             "confidence=excluded.confidence,updated_at=excluded.updated_at",
             m.to_row())
@@ -169,9 +180,10 @@ class DB:
 
     # ---- curated JSONL round-trip (git source of truth) ---------------------
     def export_curated(self, path: Path):
+        # Only HUMAN-owned facts belong in the git source of truth. Ambiguous/auto
+        # rows carry an auto-generated note, so note alone must not qualify a row.
         rows = [dict(r) for r in self.mappings()
-                if r["confidence"] in ("manual", "review")
-                or r["owner"] or r["deviation_id"] or r["note"]]
+                if r["confidence"] in ("manual", "review") or r["owner"] or r["deviation_id"]]
         with path.open("w") as f:
             f.write("# curated mappings — human-owned facts; auto links are not stored here\n")
             for r in sorted(rows, key=lambda r: r["upstream_sid"]):

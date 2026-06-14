@@ -19,6 +19,7 @@ def dashboard_md(db: DB, up_version: str, risk_high=(), risk_medium=()) -> str:
     gp = progress.gaps(db, up_version, limit=25, risk_high=risk_high, risk_medium=risk_medium)
     unv = progress.unverified(db, up_version)
     dv = progress.diverged(db, up_version)
+    al = progress.aliases(db, up_version)
     amb = progress.ambiguous(db, up_version)
     L = []
     L.append(f"# Port Dashboard — upstream `{up_version}`\n")
@@ -68,6 +69,14 @@ def dashboard_md(db: DB, up_version: str, risk_high=(), risk_medium=()) -> str:
         L.append(f"- `{d['path']}` `{d['qualname']}` — {d['deviation_id'] or '(no id)'}: {d['note']}")
     L.append("")
 
+    if al:
+        L.append(f"## Aliases / covered-by (intentional, target shared) — {len(al)}\n")
+        for a in al[:25]:
+            L.append(f"- `{a['path']}` `{a['qualname']}` — covered by `{a['covers']}`")
+        if len(al) > 25:
+            L.append(f"- … +{len(al) - 25} more")
+        L.append("")
+
     if amb:
         L.append(f"## Ambiguous links needing disambiguation — {len(amb)}\n")
         for a in amb[:25]:
@@ -113,6 +122,7 @@ def write_all(db: DB, up_version: str, out: Path,
         "gaps": progress.gaps(db, up_version, risk_high=risk_high, risk_medium=risk_medium),
         "unverified": progress.unverified(db, up_version),
         "diverged": progress.diverged(db, up_version),
+        "aliases": progress.aliases(db, up_version),
         "ambiguous": progress.ambiguous(db, up_version),
     }, indent=2, sort_keys=True))      # sorted => deterministic diffs
     db.add_snapshot(up_version, {

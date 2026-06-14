@@ -1,6 +1,20 @@
 # Changelog
 
-## Unreleased — mapping-accuracy & version-resolution pass
+## Unreleased — alias / covered-by mappings
+
+- **New `aliased` status + `portman alias A --of B`.** Lets an upstream symbol be
+  intentionally covered by another symbol's target (a private forwarder like
+  `Tensor._data`, a public wrapper, or a re-export) **without violating target
+  uniqueness**. The duplicate-target check counts only *primary* mappings; aliases
+  are excluded. Aliases count as covered (weight 1.0), are dropped from the gap
+  list, shown in the dashboard + `trace` ("covered-by"), and validated by `doctor`
+  (each alias must name a primary that shares its target). Accepts bare qualnames
+  (`Tensor._data`) or `path::Qualname`. Schema + regression test added.
+- **export bug fixed:** ambiguous auto-mappings (which carry an auto note) are no
+  longer written to `curated.jsonl`; only human-owned facts (manual/review/owner/
+  deviation) are exported.
+
+## Earlier — mapping-accuracy & version-resolution pass
 
 - **Method-name over-normalization fixed.** Trailing-underscore in-place methods
   (`to_`→`tensor_to_inplace`), leading-underscore privates (`_data` no longer

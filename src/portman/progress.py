@@ -16,7 +16,7 @@ from .model import Status, WEIGHT
 # coverage" should measure. Files/modules/tests/parse_errors are tracked but are
 # NOT part of the public-API denominator.
 API_KINDS = ("class", "function", "method", "constant", "type")
-DONE = (Status.IMPLEMENTED, Status.VERIFIED, Status.DIVERGED, Status.DEPRECATED)
+DONE = (Status.IMPLEMENTED, Status.VERIFIED, Status.DIVERGED, Status.DEPRECATED, Status.ALIASED)
 
 
 def _status_of(db: DB, sid: str) -> str:
@@ -104,7 +104,7 @@ def gaps(db: DB, up_version: str, limit: int | None = None,
         if s["kind"] == "parse_error":
             continue
         st = _status_of(db, s["sid"])
-        if Status(st) in (Status.VERIFIED, Status.DIVERGED, Status.DEPRECATED):
+        if Status(st) in (Status.VERIFIED, Status.DIVERGED, Status.DEPRECATED, Status.ALIASED):
             continue
         if WEIGHT[Status(st)] >= 0.85:
             continue  # implemented but unverified is a *verification* gap, not a port gap
@@ -133,6 +133,22 @@ def diverged(db: DB, up_version: str) -> list[dict]:
         if m and m["status"] == Status.DIVERGED.value:
             out.append({"path": s["path"], "qualname": s["qualname"] or "<file>",
                         "deviation_id": m["deviation_id"], "note": m["note"]})
+    return out
+
+
+def aliases(db: DB, up_version: str) -> list[dict]:
+    """Upstream symbols intentionally covered by another symbol's target
+    (alias / private forwarder / public wrapper)."""
+    out = []
+    sym_by_sid = {s["sid"]: s for s in db.symbols("upstream", up_version)}
+    for s in db.symbols("upstream", up_version):
+        m = db.mapping(s["sid"])
+        if m and m["status"] == Status.ALIASED.value:
+            primary = sym_by_sid.get(m["covers"])
+            out.append({"path": s["path"], "qualname": s["qualname"] or "<file>",
+                        "covers": (f"{primary['path']}::{primary['qualname']}"
+                                   if primary else m["covers"]),
+                        "note": m["note"]})
     return out
 
 

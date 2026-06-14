@@ -17,7 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from portman.config import Config
 from portman.db import DB
-from portman import inventory
+from portman import inventory, progress
 
 CFG = """
 project = "nm"
@@ -112,12 +112,34 @@ def main() -> int:
         if dups:
             failures.append(f"duplicate target mappings: {[dict(r) for r in dups]}")
 
+        # --- alias / covered_by: _data is intentionally covered by data ---------
+        from portman.model import Mapping, Status, symbol_id
+        data_sid = symbol_id("up", "tensor.py", "Tensor.data", "method")
+        priv_sid = symbol_id("up", "tensor.py", "Tensor._data", "method")
+        data_target = db.mapping(data_sid)["target_sid"]
+        db.upsert_mapping(Mapping(upstream_sid=priv_sid, target_sid=data_target,
+                                  status=Status.ALIASED.value, covers=data_sid,
+                                  confidence="manual", note="alias of Tensor.data"))
+        am = db.mapping(priv_sid)
+        if not (am and am["status"] == "aliased" and am["covers"] == data_sid
+                and am["target_sid"] == data_target):
+            failures.append(f"alias not recorded correctly: {dict(am) if am else None}")
+        # aliasing shares data's target but must NOT register as a uniqueness violation
+        if db.duplicate_targets():
+            failures.append(f"alias triggered duplicate-target violation: {db.duplicate_targets()[0]['target_sid']}")
+        # alias counts as covered (a gap query must not list _data)
+        cov2 = progress.coverage(db, "v1")
+        if cov2["by_status"].get("aliased", 0) != 1:
+            failures.append(f"aliased not counted in status breakdown: {cov2['by_status']}")
+        if any(g["qualname"] == "_data" for g in progress.gaps(db, "v1")):
+            failures.append("aliased _data still reported as a gap")
+
         if failures:
             print("NAME-MATCH FAIL:")
             for f in failures:
                 print("  -", f)
             return 1
-        print(f"NAME-MATCH OK: {len(EXPECT)} conventions resolved, _data unlinked, no dup targets")
+        print(f"NAME-MATCH OK: {len(EXPECT)} conventions resolved, _data alias covered, no dup-target violation")
     return 0
 
 

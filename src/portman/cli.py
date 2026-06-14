@@ -9,6 +9,7 @@
   portman snapshot --version REF    re-extract upstream at a git ref into the DB
   portman diff OLD NEW              upstream change report between two snapshots
   portman set STATUS --upstream ... manually set a mapping's status/owner (curated)
+  portman alias A --of B            mark upstream A as covered by B's target (alias)
   portman trace PATH[::QUALNAME]    show the full provenance/verification record
   portman export                    write curated facts to mappings/curated.jsonl
   portman import                    load curated facts from mappings/curated.jsonl
@@ -195,6 +196,48 @@ def cmd_set(args):
     print(f"set {args.upstream} -> {args.status} (curated.jsonl updated)")
 
 
+def _resolve_upstream_sid(db, cfg, spec: str, kind: str):
+    """Resolve a symbol spec to a sid. Accepts an exact 'path::Qualname' or a bare
+    'Qualname' that is searched within the upstream inventory. Returns
+    (sid, error_message)."""
+    if "::" in spec:
+        path, _, qual = spec.partition("::")
+        return symbol_id(cfg.upstream.repo, path, qual, kind), None
+    matches = [s for s in db.symbols("upstream", cfg.upstream.version)
+               if s["qualname"] == spec and (not kind or s["kind"] == kind)]
+    if len(matches) == 1:
+        return matches[0]["sid"], None
+    if not matches:
+        return None, f"'{spec}' not found in upstream (kind={kind})"
+    opts = ", ".join(f"{m['path']}::{m['qualname']}" for m in matches[:6])
+    return None, f"'{spec}' is ambiguous ({len(matches)} matches) — qualify as path::Qualname: {opts}"
+
+
+def cmd_alias(args):
+    """Mark an upstream symbol as covered by another symbol's target implementation
+    (an alias / private forwarder / public wrapper), without violating target
+    uniqueness. Accepts bare qualnames or path::Qualname.
+    Example: portman alias 'Tensor._data' --of 'Tensor.data'."""
+    cfg = _cfg(args); db = _db(cfg)
+    alias_sid, err = _resolve_upstream_sid(db, cfg, args.alias, args.kind)
+    if err:
+        print(f"error: {err}"); return 1
+    primary_sid, err = _resolve_upstream_sid(db, cfg, args.of, args.of_kind or args.kind)
+    if err:
+        print(f"error: {err}"); return 1
+    pm = db.mapping(primary_sid)
+    if not pm or not pm["target_sid"]:
+        print(f"error: primary '{args.of}' has no target mapping yet — map/verify it first.")
+        return 1
+    db.upsert_mapping(Mapping(
+        upstream_sid=alias_sid, target_sid=pm["target_sid"],
+        status=Status.ALIASED.value, covers=primary_sid, confidence="manual",
+        note=args.note or f"alias of {args.of}"))
+    db.export_curated(cfg.root / "mappings" / "curated.jsonl")
+    print(f"aliased {args.alias} -> covered by {args.of} (target preserved; "
+          f"curated.jsonl updated)")
+
+
 def cmd_trace(args):
     cfg = _cfg(args); db = _db(cfg)
     path, _, qual = args.target.partition("::")
@@ -214,6 +257,12 @@ def cmd_trace(args):
                         (m["target_sid"], cfg.target.version)).fetchone()
                     if t:
                         print(f"  -> TARGET {t['path']}::{t['qualname']} L{t['lineno']}")
+                if m["covers"]:
+                    p = db.c.execute(
+                        "SELECT path,qualname FROM symbols WHERE sid=? AND side='upstream' AND version=?",
+                        (m["covers"], cfg.upstream.version)).fetchone()
+                    primary = f"{p['path']}::{p['qualname']}" if p else m["covers"]
+                    print(f"  covered-by (alias of): {primary}")
                 if m["deviation_id"]:
                     print(f"  deviation: {m['deviation_id']} — {m['note']}")
             else:
@@ -316,6 +365,16 @@ def cmd_doctor(args):
         bad_dev = [r for r in db.mappings()
                    if r["status"] == Status.DIVERGED.value and not r["deviation_id"]]
         add(not bad_dev, f"diverged mappings have deviation ids ({len(bad_dev)})")
+        # alias integrity: each aliased mapping must name a primary that shares its target
+        by_sid = {r["upstream_sid"]: r for r in db.mappings()}
+        bad_alias = []
+        for r in db.mappings():
+            if r["status"] == Status.ALIASED.value:
+                prim = by_sid.get(r["covers"])
+                if not r["covers"] or not prim or prim["target_sid"] != r["target_sid"]:
+                    bad_alias.append(r["upstream_sid"])
+        add(not bad_alias, f"aliased mappings reference a valid primary ({len(bad_alias)})",
+            "; ".join(bad_alias[:3]))
     else:
         add(True, "database present", "(not built yet — run `portman inventory`)", warn=True)
 
@@ -368,6 +427,10 @@ def build_parser():
     s.add_argument("--upstream", required=True); s.add_argument("--kind", default="function")
     s.add_argument("--verification", default=""); s.add_argument("--owner", default="")
     s.add_argument("--deviation", default=""); s.add_argument("--note", default=""); s.set_defaults(func=cmd_set)
+    s = sub.add_parser("alias"); s.add_argument("alias")
+    s.add_argument("--of", required=True, help="primary upstream symbol path::Qualname")
+    s.add_argument("--kind", default="method"); s.add_argument("--of-kind", dest="of_kind", default="")
+    s.add_argument("--note", default=""); s.set_defaults(func=cmd_alias)
     s = sub.add_parser("trace"); s.add_argument("target"); s.set_defaults(func=cmd_trace)
     sub.add_parser("export").set_defaults(func=cmd_export)
     sub.add_parser("import").set_defaults(func=cmd_import)
