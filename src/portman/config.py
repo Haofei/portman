@@ -28,6 +28,8 @@ class Config:
     # so the framework is library-agnostic.
     risk_high: tuple[str, ...] = ()
     risk_medium: tuple[str, ...] = ()
+    # project-specific cross-language naming conventions; see inventory.MappingRules
+    mapping: dict = field(default_factory=dict)
     root: Path = Path(".")
 
     @classmethod
@@ -54,4 +56,5 @@ class Config:
             generic_adapters=data.get("adapters", {}),
             risk_high=tuple(risk.get("high", [])),
             risk_medium=tuple(risk.get("medium", [])),
+            mapping=data.get("mapping", {}),
             root=root)

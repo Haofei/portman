@@ -139,20 +139,42 @@ def cmd_snapshot(args):
             syms = ad.extract_tree(Path(tmp) / rel, "upstream", cfg.upstream.repo,
                                    sha, cfg.upstream.exclude)
             db.replace_symbols("upstream", sha, syms)
+            db.set_version_alias(ref, sha)   # so `diff <ref> ...` resolves
             print(f"snapshot {ref} ({sha[:10]}): {len(syms)} upstream symbols stored")
+            print(f"  use either the ref '{ref}' or sha '{sha[:10]}' with `portman diff`")
         finally:
             subprocess.run(["git", "-C", repo, "worktree", "remove", "--force", tmp],
                            capture_output=True)
 
 
+def _resolve_diff_version(cfg, db, v: str) -> str:
+    """Resolve a user-supplied version (tag/branch/sha) to the key its symbols are
+    stored under: try the alias table, then `git rev-parse` in the upstream repo."""
+    resolved = db.resolve_version(v)
+    if db.has_version("upstream", resolved):
+        return resolved
+    sha = subprocess.run(["git", "-C", str(cfg.upstream.root), "rev-parse", v],
+                         capture_output=True, text=True).stdout.strip()
+    if sha and db.has_version("upstream", sha):
+        return sha
+    return resolved   # caller reports the missing snapshot
+
+
 def cmd_diff(args):
     cfg = _cfg(args); db = _db(cfg)
-    rep = diffmod.upgrade_report(db, args.old, args.new)
+    old = _resolve_diff_version(cfg, db, args.old)
+    new = _resolve_diff_version(cfg, db, args.new)
+    for label, raw, res in (("old", args.old, old), ("new", args.new, new)):
+        if not db.has_version("upstream", res):
+            print(f"error: no snapshot for {label} version '{raw}'. "
+                  f"Run: portman snapshot --version {raw}")
+            return 1
+    rep = diffmod.upgrade_report(db, old, new)
     if args.json:
         print(json.dumps(rep, indent=2)); return
     out = cfg.reports_dir; out.mkdir(parents=True, exist_ok=True)
     md = reportmod.upgrade_md(rep)
-    (out / f"upgrade_{args.old[:8]}_{args.new[:8]}.md").write_text(md)
+    (out / f"upgrade_{old[:8]}_{new[:8]}.md").write_text(md)
     print(md)
 
 

@@ -53,6 +53,12 @@ CREATE TABLE IF NOT EXISTS parse_errors (
   side TEXT, version TEXT, path TEXT, error TEXT,
   PRIMARY KEY (side, version, path)
 );
+
+-- Lets `diff`/CI refer to a snapshot by a human ref (tag/branch) even though
+-- symbols are stored under the resolved commit SHA.
+CREATE TABLE IF NOT EXISTS version_aliases (
+  ref TEXT PRIMARY KEY, sha TEXT NOT NULL
+);
 """
 
 
@@ -82,6 +88,23 @@ class DB:
     def parse_errors(self, side: str, version: str) -> list[sqlite3.Row]:
         return self.c.execute("SELECT * FROM parse_errors WHERE side=? AND version=?",
                               (side, version)).fetchall()
+
+    # ---- version aliases (ref/tag -> resolved sha) --------------------------
+    def set_version_alias(self, ref: str, sha: str):
+        if ref and ref != sha:
+            self.c.execute("INSERT OR REPLACE INTO version_aliases VALUES (?,?)", (ref, sha))
+            self.c.commit()
+
+    def resolve_version(self, v: str) -> str:
+        """Map a tag/branch ref to the sha its symbols are stored under; pass
+        through an unknown value unchanged (it may already be a sha)."""
+        row = self.c.execute("SELECT sha FROM version_aliases WHERE ref=?", (v,)).fetchone()
+        return row["sha"] if row else v
+
+    def has_version(self, side: str, version: str) -> bool:
+        return self.c.execute(
+            "SELECT 1 FROM symbols WHERE side=? AND version=? LIMIT 1",
+            (side, version)).fetchone() is not None
 
     def duplicate_targets(self) -> list[sqlite3.Row]:
         """Target symbols claimed by more than one mapping — a 1:1 violation unless

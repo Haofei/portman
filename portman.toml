@@ -27,6 +27,24 @@ exclude = ["vendor", "__pycache__"]
 high = ["dtype", "uop/ops", "tensor", "device", "helpers"]
 medium = ["nn", "engine", "runtime", "codegen", "renderer"]
 
+# Project-specific cross-language naming conventions for auto-mapping. All optional
+# and empty by default — the engine itself is library-agnostic; these encode how
+# tinygrad-rss specifically renames things.
+[mapping.type_aliases]
+# target struct/receiver name -> upstream type name(s) it implements
+TGBuffer = ["Buffer"]
+
+[mapping.owner_prefix_aliases]
+# upstream owner class -> target qualname prefixes that flatten its methods
+DTypeMixin = ["mixin_dtype"]
+UPat = ["upat"]
+
+# A flat target fn whose first param is an interned-cache type and second is
+# (id, Int) is really a method of `owner` (after stripping `strip_prefix`).
+[mapping.receiver_methods.UOpCache]
+owner = "UOp"
+strip_prefix = "uop_"
+
 # Example of adding a brand-new target language with zero code, via the generic
 # regex adapter. Reference only — not used by the tinygrad port above.
 [adapters.go]

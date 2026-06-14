@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import re
 import time
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from .config import Config
@@ -50,14 +51,30 @@ def _raw_snake(s: str) -> str:
     return re.sub(r"(?<!^)(?=[A-Z])", "_", s).lower()
 
 
-TARGET_TYPE_ALIASES = {
-    "TGBuffer": {"Buffer"},
-}
+@dataclass
+class MappingRules:
+    """Project-specific naming conventions for cross-language matching. Empty by
+    default so the engine is library-agnostic; values come from portman.toml
+    `[mapping]`. See docs/02 for the schema."""
+    # target type/struct name (or inferred receiver type) -> upstream type names
+    type_aliases: dict[str, set[str]] = field(default_factory=dict)
+    # upstream owner class -> target qualname prefixes that flatten its methods
+    owner_prefix_aliases: dict[str, list[str]] = field(default_factory=dict)
+    # interned-cache receiver type -> {owner, strip_prefix}: a flat target function
+    # whose first param is this type and second is (id, Int) is really a method of
+    # `owner`, after stripping `strip_prefix` from its name.
+    receiver_methods: dict[str, dict] = field(default_factory=dict)
 
-TARGET_OWNER_PREFIX_ALIASES = {
-    "DTypeMixin": {"mixin_dtype"},
-    "UPat": {"upat"},
-}
+    @classmethod
+    def from_config(cls, cfg: Config) -> "MappingRules":
+        m = getattr(cfg, "mapping", {}) or {}
+        return cls(
+            type_aliases={k: set(v) for k, v in m.get("type_aliases", {}).items()},
+            owner_prefix_aliases={k: list(v) for k, v in m.get("owner_prefix_aliases", {}).items()},
+            receiver_methods=dict(m.get("receiver_methods", {})))
+
+
+NO_RULES = MappingRules()
 
 
 def _forms(name: str) -> tuple[set[str], set[str]]:
@@ -124,44 +141,57 @@ def _rss_arg_types(signature: str) -> list[tuple[str, str]]:
     return out
 
 
-def _looks_like_uop_method(sym) -> bool:
-    if sym["kind"] != "function" or not sym["path"].startswith("uop/"):
-        return False
-    name = sym["qualname"]
-    if name.startswith("uop_"):
-        return True
+def _receiver_method_forms(sym, rules: MappingRules) -> set[str]:
+    """Owner-qualified strong forms for a flat target function that is really a
+    method. A function is treated as a method of `owner` when EITHER its name
+    carries the configured `strip_prefix` (e.g. `uop_foo`) OR its first param is
+    the interned-cache receiver type and its second is the id (e.g.
+    `foo(c: UOpCache, id: Int, ...)`). Config-driven via [mapping].receiver_methods."""
+    if not rules.receiver_methods or sym["kind"] != "function":
+        return set()
     args = _rss_arg_types(sym["signature"] or "")
-    return len(args) >= 2 and args[0][1] == "UOpCache" and args[1] == ("id", "Int")
+    out: set[str] = set()
+    for cache_type, spec in rules.receiver_methods.items():
+        owner, sp = spec["owner"], spec.get("strip_prefix", "")
+        name_match = bool(sp) and sym["qualname"].startswith(sp)
+        sig_match = len(args) >= 2 and args[0][1] == cache_type and args[1] == ("id", "Int")
+        if name_match or sig_match:
+            leaf = sym["qualname"]
+            if sp and leaf.startswith(sp):
+                leaf = leaf[len(sp):]
+            out.add(f"{_snake(owner)}_{_snake(leaf)}")
+    return out
 
 
-def _symbol_forms(sym) -> tuple[set[str], set[str]]:
+def _symbol_forms(sym, rules: MappingRules = NO_RULES,
+                  side: str = "target") -> tuple[set[str], set[str]]:
     strong, weak = _forms(sym["qualname"])
-    for alias in TARGET_TYPE_ALIASES.get(sym["qualname"], set()):
+    # type aliases apply on either side (keyed by the specific name).
+    for alias in rules.type_aliases.get(sym["qualname"], set()):
         alias_strong, alias_weak = _forms(alias)
         strong |= alias_strong
         weak |= alias_weak
-    for owner, prefixes in TARGET_OWNER_PREFIX_ALIASES.items():
+    for owner, prefixes in rules.owner_prefix_aliases.items():
         for prefix in prefixes:
             if sym["qualname"].startswith(f"{prefix}_"):
                 leaf = sym["qualname"][len(prefix) + 1:]
                 strong.add(f"{_snake(owner)}_{_snake(leaf)}")
-    if sym["kind"] == "function" and "." not in sym["qualname"]:
+    # First-arg receiver inference is a TARGET-side convention (the port flattens
+    # a method into a free function whose first param is the receiver). Applying
+    # it to upstream would mint phantom owner forms from Python type annotations.
+    if side == "target" and sym["kind"] == "function" and "." not in sym["qualname"]:
         owner = _rss_first_arg_type(sym["signature"] or "")
         if owner:
             leaf = sym["qualname"].rsplit(".", 1)[-1]
             strong.add(f"{_snake(owner)}_{_snake(leaf)}")
-            for alias in TARGET_TYPE_ALIASES.get(owner, set()):
+            for alias in rules.type_aliases.get(owner, set()):
                 strong.add(f"{_snake(alias)}_{_snake(leaf)}")
-        if _looks_like_uop_method(sym):
-            leaf = sym["qualname"]
-            if leaf.startswith("uop_"):
-                leaf = leaf[4:]
-            strong.add(f"u_op_{_snake(leaf)}")
+        strong |= _receiver_method_forms(sym, rules)
     return strong, weak
 
 
-def _match_score(u, t) -> int:
-    """0 = no match, 3 = strong/strong (unambiguous), 1 = bare-name only."""
+def _match_score(u, t, rules: MappingRules = NO_RULES) -> int:
+    """0 = no match, 4 = exact target qualname, 3 = strong/strong, 1 = bare-name."""
     if not _kind_compatible(u["kind"], t["kind"]):
         return 0
     if u["kind"] == "method" and t["kind"] in ("method", "function"):
@@ -176,8 +206,8 @@ def _match_score(u, t) -> int:
             return 4
         if leaf.endswith("_") and not leaf.endswith("__") and t["qualname"] == f"{_snake(owner)}_{_snake(leaf[:-1])}_inplace":
             return 4
-    us, uw = _symbol_forms(u)
-    ts, tw = _symbol_forms(t)
+    us, uw = _symbol_forms(u, rules, "upstream")
+    ts, tw = _symbol_forms(t, rules, "target")
     if us & ts:
         return 3
     if (us & tw) or (uw & ts) or (uw & tw):
@@ -221,6 +251,7 @@ def _resolve_declared(declared: str, up_paths: set[str]) -> str:
 
 
 def auto_map(cfg: Config, db: DB) -> dict:
+    rules = MappingRules.from_config(cfg)
     up_syms = db.symbols("upstream", cfg.upstream.version)
     tg_syms = db.symbols("target", cfg.target.version)
     up_paths = {s["path"] for s in up_syms}
@@ -276,7 +307,7 @@ def auto_map(cfg: Config, db: DB) -> dict:
         for t in tgt_by_uppath.get(u["path"], []):
             if t["kind"] in code_kinds:
                 continue
-            sc = _match_score(u, t)
+            sc = _match_score(u, t, rules)
             if not sc:
                 continue
             cand_for_upstream.setdefault(u["sid"], []).append((sc, t["sid"]))

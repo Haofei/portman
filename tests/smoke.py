@@ -76,6 +76,13 @@ def main() -> int:
         db.replace_symbols("upstream", "v2", syms)
         rep = diffmod.upgrade_report(db, "v1", "v2")
         assert rep["summary"]["signature_changed"] == 1, rep["summary"]
+
+        # version-alias round-trip: a tag resolves to its stored sha (snapshot/diff)
+        db.set_version_alias("v2.0.0", "deadbeef")
+        assert db.resolve_version("v2.0.0") == "deadbeef"
+        assert db.resolve_version("unknown-ref") == "unknown-ref"
+        assert db.has_version("upstream", "v2") and not db.has_version("upstream", "nope")
+
         print("SMOKE OK:", {"linked": res["linked"], "weighted": cov["weighted_pct"],
                             "sig_changes": rep["summary"]["signature_changed"]})
     return 0

@@ -45,3 +45,26 @@ Example: the reference repo's explicit-UOp-cache deviation is `D-0001` in
 Line ranges live on the `symbols` rows (they change constantly); the mapping
 stays stable. Behavior evidence lives in the verification harness (docs/08); the
 mapping only stores the resulting `verification` *level*.
+
+## Auto-mapping rules ([mapping] config)
+
+Matching is generic logic (strong owner-qualified vs weak bare-name forms,
+exact-spelling score 4, target uniqueness) plus **project-specific naming
+conventions in `portman.toml` `[mapping]`** — empty by default so the engine
+stays library-agnostic:
+
+```toml
+[mapping.type_aliases]            # target name -> upstream type name(s)
+TGBuffer = ["Buffer"]
+[mapping.owner_prefix_aliases]    # upstream owner -> target prefixes that flatten it
+DTypeMixin = ["mixin_dtype"]
+[mapping.receiver_methods.UOpCache]   # flat fn(c: UOpCache, id: Int, …) is a UOp method
+owner = "UOp"
+strip_prefix = "uop_"
+```
+
+Receiver inference (a target free function whose first param is the receiver) is
+applied to the **target side only**, so upstream Python annotations cannot mint
+phantom owner forms. Conventions handled generically: trailing-underscore in-place
+methods (`to_` → `tensor_to_inplace`), leading-underscore privates (kept distinct
+from the public name), and dunders (`__hash__` matched verbatim, beating `hash`).

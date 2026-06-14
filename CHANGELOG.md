@@ -1,6 +1,24 @@
 # Changelog
 
-## Unreleased — review-driven correctness & portability pass
+## Unreleased — mapping-accuracy & version-resolution pass
+
+- **Method-name over-normalization fixed.** Trailing-underscore in-place methods
+  (`to_`→`tensor_to_inplace`), leading-underscore privates (`_data` no longer
+  steals the public name), and dunders (`__hash__` matches the raw target spelling)
+  now resolve; exact target qualname (score 4) beats a normalized tie. Regression
+  test `tests/name_matching.py` wired into `make test`.
+- **snapshot/diff tag-vs-SHA mismatch fixed.** `snapshot --version <tag>` stores
+  symbols under the resolved sha *and* records a `version_aliases` row, so
+  `diff <tag> <sha>` (and the CI flow) resolves correctly. A missing snapshot now
+  yields a clear error + nonzero exit instead of an empty/misleading diff.
+- **Port-specific mapping rules moved to config.** `TARGET_TYPE_ALIASES`,
+  `TARGET_OWNER_PREFIX_ALIASES`, and the UOp cache-type heuristic are gone from the
+  generic engine; they now live in `portman.toml` `[mapping]` (empty by default).
+  Target-side receiver inference is gated to the target side so upstream Python
+  annotations can't mint phantom owner forms. Net mapping result unchanged
+  (1682 links, 187 ambiguous, 0 duplicate targets).
+
+## Earlier — review-driven correctness & portability pass
 
 Addresses an external source review. The theme: **make it stricter, refuse to
 overclaim parity.**
