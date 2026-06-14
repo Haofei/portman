@@ -219,13 +219,17 @@ def batches(db: DB, up_version: str, cfg, limit: int | None = None,
     for (path, owner), members in groups.items():
         reasons = Counter(m.get("reason", "missing") for m in members)
         blockers = sorted({_BLOCKER[r] for r in reasons if r in _BLOCKER})
-        # Suggest where this batch actually lands: prefer the files the batch's own
-        # candidates live in; else fall back to the upstream file's mirror(s). For a
-        # split port this is a LIST, not one (misleading) file.
+        # Suggest where this batch actually lands (a LIST — split ports span files).
+        # MERGE the files the batch's candidates live in (concrete, by frequency)
+        # with the upstream file's mirror file(s): a batch often mixes symbols with
+        # a candidate and symbols with none (e.g. UOp.alu/const are missing), and
+        # the no-candidate ones still belong in the mirror files.
         cand_paths = Counter(m["target_candidate_path"] for m in members
                              if m.get("target_candidate_path"))
-        target_files = ([p for p, _ in cand_paths.most_common()]
-                        or uppath_to_tgtpaths.get(path, []))
+        target_files = [p for p, _ in cand_paths.most_common()]
+        for p in uppath_to_tgtpaths.get(path, []):
+            if p not in target_files:
+                target_files.append(p)
         out.append({
             "batch": f"{owner} in {path}",
             "upstream_path": path,
