@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased — split the CLI; DRY the read model
+
+- **Refactor: `commands.py`.** The CLI god-file (584 lines mixing command logic
+  with parser wiring) split into `commands.py` (the `cmd_*` implementations) and a
+  thin `cli.py` (101 lines: docstring + `build_parser` + `main`). New `_ctx(args)`
+  helper replaces the `cfg = _cfg(args); db = _db(cfg)` boilerplate at all 13 call
+  sites. Pure restructure; behavior unchanged, all commands verified.
+- **DRY: `db.mapping_index()`** — one keyed-by-`upstream_sid` lookup, replacing the
+  mapping-index comprehension that `progress.coverage`/`gaps` each rebuilt (and a
+  redundant `db.mappings()` re-query in the gaps explain path).
+
 ## Unreleased — extract the matcher; fix forced-link target collisions
 
 - **Refactor: `matching.py`.** The cross-language matcher (`MappingRules`, name

@@ -48,7 +48,7 @@ def coverage(db: DB, up_version: str, cfg=None) -> dict:
     copied_roots = cfg.copied_roots if cfg else ()
     ignore = cfg.ignore if cfg else {}
     syms = db.symbols("upstream", up_version)
-    m_by_sid = {m["upstream_sid"]: m for m in db.mappings()}
+    m_by_sid = db.mapping_index()
     by_status: dict[str, int] = defaultdict(int)
     by_kind: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
     by_area: dict[str, list] = defaultdict(lambda: [0, 0])   # area -> [done, total]
@@ -144,7 +144,7 @@ def gaps(db: DB, up_version: str, limit: int | None = None, cfg=None,
     high = cfg.risk_high if cfg else risk_high
     medium = cfg.risk_medium if cfg else risk_medium
     dep_boost = cfg.dep_boost if cfg else ()
-    m_by_sid = {m["upstream_sid"]: m for m in db.mappings()}
+    m_by_sid = db.mapping_index()
 
     tgt_by_uppath, rules, target_owner = {}, None, {}
     if explain and cfg:
@@ -152,7 +152,7 @@ def gaps(db: DB, up_version: str, limit: int | None = None, cfg=None,
         tgt_by_uppath = fc["tgt_by_uppath"]
         rules = inventory.build_rules(cfg)
         up_by_sid = {s["sid"]: s for s in fc["up_syms"]}
-        for m in db.mappings():
+        for m in m_by_sid.values():
             if m["target_sid"]:
                 us = up_by_sid.get(m["upstream_sid"])
                 target_owner[m["target_sid"]] = (f"{us['path']}::{us['qualname']}"

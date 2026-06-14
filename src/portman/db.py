@@ -162,6 +162,11 @@ class DB:
     def mappings(self) -> list[sqlite3.Row]:
         return self.c.execute("SELECT * FROM mappings").fetchall()
 
+    def mapping_index(self) -> dict[str, sqlite3.Row]:
+        """All mappings keyed by upstream_sid — the read model's per-symbol lookup
+        in one query (instead of N `mapping()` calls or repeated comprehensions)."""
+        return {m["upstream_sid"]: m for m in self.mappings()}
+
     def upsert_deviation(self, d: Deviation):
         self.c.execute(
             "INSERT OR REPLACE INTO deviations VALUES "
