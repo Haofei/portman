@@ -171,6 +171,14 @@ def match_score(u, t, rules: MappingRules = NO_RULES) -> int:
         return 0
     if u["kind"] == "method" and t["kind"] in ("method", "function"):
         owner, leaf = u["qualname"].rsplit(".", 1)
+        # An explicit owner-qualified target (`fn Owner.method`) that spells the
+        # upstream method verbatim is the strongest possible signal — it must beat
+        # any inferred owner form (receiver inference / owner_prefix_aliases) and
+        # any normalized collision (e.g. `Owner.reduce` vs `Owner.__reduce__`,
+        # which share a snake form). Without this an intentionally hand-written
+        # method ties with the flat function it wraps and neither links.
+        if t["qualname"] == u["qualname"]:
+            return 4
         # target preserves the raw method spelling verbatim (e.g. dunders) — exact
         # name beats any normalized tie. Opt-in (Python convention).
         if rules.dunder_passthrough and t["qualname"] == leaf:

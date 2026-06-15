@@ -1,7 +1,12 @@
 # Feature request: prefer an explicit `fn Type.method` over an inferred receiver-method
 
-**Status:** requested · **Driver:** tinygrad-rsmc UPat method surface
+**Status:** IMPLEMENTED · **Driver:** tinygrad-rsmc UPat method surface
 **Repro built on:** current portman (post rss-adapter `module` awareness)
+
+> Resolved in `matching.py::match_score`: an explicit owner-qualified target whose
+> qualname spells the upstream method verbatim (`t.qualname == u.qualname`) now
+> scores 4 (exact), beating inferred owner forms and normalized collisions. Closes
+> `UPat.reduce` (uop area 73.9% → 74.2%); regression test `tests/explicit_method.py`.
 
 ## Summary
 
