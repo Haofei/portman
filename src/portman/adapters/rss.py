@@ -3,7 +3,14 @@
 rsscript has no Python AST, so we parse declarations with anchored regexes:
 `fn name(...)`, `struct Name`, `enum Name`, and `const NAME`. It also reads the
 provenance header (see provenance.py) but that is handled separately so the
-adapter stays a pure symbol extractor."""
+adapter stays a pure symbol extractor.
+
+A file may declare `module a.b.c`; rsscript namespaces every symbol in it under
+that name. A de-prefixed `fn scalar` in `module dtype` is therefore the same
+symbol the flat port spelled `dtype_scalar`, so we reconstruct that conventional
+flat name for plain functions (module path joined by `_`). Types, methods (already
+owner-qualified), and constants keep their declared names — they match upstream by
+name regardless of module."""
 from __future__ import annotations
 
 import re
@@ -16,6 +23,12 @@ FN = re.compile(r"^\s*(?:pub\s+)?fn\s+([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za
 STRUCT = re.compile(r"^\s*(?:pub\s+)?struct\s+([A-Za-z_][A-Za-z0-9_]*)", re.MULTILINE)
 ENUM = re.compile(r"^\s*(?:pub\s+)?(?:enum|sum)\s+([A-Za-z_][A-Za-z0-9_]*)", re.MULTILINE)
 CONST = re.compile(r"^\s*(?:pub\s+)?(?:const|let)\s+([A-Z][A-Z0-9_]*)\b", re.MULTILINE)
+#: an optional `module a.b.c` declaration at the top of a file. rsscript module
+#: isolation namespaces every symbol in the file under this name, so a de-prefixed
+#: `fn scalar` in `module dtype` is the same symbol the flat port spelled
+#: `dtype_scalar`. We reconstruct that conventional flat name (below) so the
+#: matcher's existing owner-prefix / receiver rules keep working unchanged.
+MODULE = re.compile(r"^\s*module\s+([A-Za-z_][A-Za-z0-9_.]*)\s*$", re.MULTILINE)
 
 
 _QUAL = re.compile(r"^(read|mut|fresh)\s+")
@@ -52,11 +65,20 @@ class RssAdapter(Adapter):
         out: list[Symbol] = [Symbol(side=side, repo=repo, path=rel, qualname="",
                                     kind=SymbolKind.FILE.value, version=version,
                                     body_hash=h(src))]
+        # `module a.b.c` -> the flat owner prefix `a_b_c_` applied to plain
+        # functions only. Types/methods/constants keep their declared names: a
+        # `struct DType` or `const DTYPES_DICT` matches upstream by name regardless
+        # of module, and a `fn DType.method` already carries its owner.
+        mmod = MODULE.search(src)
+        mod_prefix = (mmod.group(1).replace(".", "_") + "_") if mmod else ""
         for m in FN.finditer(src):
             name, args, ret = m.group(1), m.group(2), m.group(3)
             sig = f"({args.strip()}){ret.strip()}"
             kind = SymbolKind.METHOD.value if "." in name else SymbolKind.FUNCTION.value
-            out.append(Symbol(side=side, repo=repo, path=rel, qualname=name,
+            qual = name
+            if mod_prefix and "." not in name:
+                qual = mod_prefix + name
+            out.append(Symbol(side=side, repo=repo, path=rel, qualname=qual,
                               kind=kind, signature=sig,
                               lineno=_lineno(src, m.start()), version=version,
                               sig_hash=h(re.sub(r"\s+", "", sig))))

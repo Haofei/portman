@@ -10,7 +10,7 @@ reports = "reports"
 repo = "tinygrad"
 root = "../tinygrad/tinygrad"                 # the Python package, not the whole repo
 adapter = "python"
-version = "fa400f9790ab9a684387b02e958658217b33e7c1"   # pinned baseline (v0.13.0-160)
+version = "5d5ead78dad797b0b914377d5d568efd377235ca"   # pinned baseline (2026-06-13)
 # runtime/autogen is machine-generated and vendored verbatim; not a hand-port target.
 exclude = ["runtime/autogen", "__pycache__"]
 
@@ -63,7 +63,9 @@ boost = ["uop/ops.py::UOp.const", "uop/ops.py::UOp.alu", "dtype.py::dtypes"]
 
 # Suggested verification command included in batch manifests (#9).
 [verify]
-command = "RSSCRIPT_RUNTIME_PATH=/home/zoe/rsscript/crates/runtime /home/zoe/rsscript/target/release/rss run tinygrad-rss && python3 oracle/roundtrip.py"
+# Paths are relative to the workspace (siblings checked out next to each other);
+# in the Docker dev env these are pre-set. See ../tinygrad-rsmc/docs/DOCKER.md.
+command = "cd ../tinygrad-rsmc && RSSCRIPT_RUNTIME_PATH=../rsscript/crates/runtime ../rsscript/target/release/rss run tinygrad-rss && PYTHONPATH=../tinygrad python3 oracle/roundtrip.py"
 
 # Project-specific cross-language naming conventions for auto-mapping. All optional
 # and empty/off by default — the engine itself is library-agnostic; everything
